@@ -1,0 +1,47 @@
+[versions]
+agp = "8.4.0"
+kotlin = "1.9.0"
+coreKtx = "1.13.1"
+junit = "4.13.2"
+junitVersion = "1.1.5"
+espressoCore = "3.5.1"
+lifecycleRuntimeKtx = "2.8.0"
+activityCompose = "1.9.0"
+composeBom = "2023.08.00"
+segwayRobotSpeechSdk = "0.6.335"
+segwayRobotHeadsdk = "0.6.1435"
+segwayRobotBasesdk = "0.6.1434"
+segwayRobotSensorsdk = "0.6.1434"
+segwayRobotVisionsdk = "0.6.1149"
+segwayRobotRobotConnectivitySdk = "0.5.127"
+segwayRobotMobileConnectivitySdk = "0.5.127"
+segwayRobotSupportLib = "1.1.2"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+segway-robot-speech-sdk = { group = "com.segway.robot", name = "speech-sdk", version.ref = "segwayRobotSpeechSdk" } 
+segway-robot-headsdk = { group = "com.segway.robot", name = "headsdk", version.ref = "segwayRobotHeadsdk" } 
+segway-robot-basesdk = { group = "com.segway.robot", name = "basesdk", version.ref = "segwayRobotBasesdk" }
+segway-robot-sensorsdk = { group = "com.segway.robot", name = "sensorsdk", version.ref = "segwayRobotSensorsdk" }
+segway-robot-visionsdk = { group = "com.segway.robot", name = "visionsdk", version.ref = "segwayRobotVisionsdk" }
+segway-robot-robot-connectivity-sdk = { group = "com.segway.robot", name = "robot-connectivity-sdk", version.ref = "segwayRobotRobotConnectivitySdk" }
+segway-robot-mobile-connectivity-sdk = { group = "com.segway.robot", name = "mobile-connectivity-sdk", version.ref = "segwayRobotMobileConnectivitySdk" }
+segway-robot-support-lib = { group = "com.segway.robot", name = "support-lib", version.ref = "segwayRobotSupportLib" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+
