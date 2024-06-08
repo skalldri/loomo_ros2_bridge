@@ -1,5 +1,5 @@
 [versions]
-agp = "8.4.0"
+agp = "8.4.1"
 kotlin = "1.9.0"
 coreKtx = "1.13.1"
 junit = "4.13.2"
@@ -7,15 +7,22 @@ junitVersion = "1.1.5"
 espressoCore = "3.5.1"
 lifecycleRuntimeKtx = "2.8.0"
 activityCompose = "1.9.0"
-composeBom = "2023.08.00"
+composeBom = "2024.05.00"
+slf4jAndroid = "2.0.13-0"
+slf4jVer = "2.0.13"
+
 segwayRobotSpeechSdk = "0.6.335"
-segwayRobotHeadsdk = "0.6.1435"
-segwayRobotBasesdk = "0.6.1434"
-segwayRobotSensorsdk = "0.6.1434"
-segwayRobotVisionsdk = "0.6.1149"
+segwayRobotHeadsdk = "0.6.1653"
+segwayRobotBasesdk = "0.6.1653"
+segwayRobotSensorsdk = "0.6.1653"
+segwayRobotVisionsdk = "0.7.647"
+segwayRobotBasicClass = "0.6.1169"
+segwayRobotSdkBase = "0.1.97"
 segwayRobotRobotConnectivitySdk = "0.5.127"
 segwayRobotMobileConnectivitySdk = "0.5.127"
+segwayRobotBaseConnectivitySdk = "0.5.127"
 segwayRobotSupportLib = "1.1.2"
+segwayRobotVision = "0.7.870"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,7 +46,13 @@ segway-robot-sensorsdk = { group = "com.segway.robot", name = "sensorsdk", versi
 segway-robot-visionsdk = { group = "com.segway.robot", name = "visionsdk", version.ref = "segwayRobotVisionsdk" }
 segway-robot-robot-connectivity-sdk = { group = "com.segway.robot", name = "robot-connectivity-sdk", version.ref = "segwayRobotRobotConnectivitySdk" }
 segway-robot-mobile-connectivity-sdk = { group = "com.segway.robot", name = "mobile-connectivity-sdk", version.ref = "segwayRobotMobileConnectivitySdk" }
+segway-robot-base-connectivity-sdk = { group = "com.segway.robot", name = "base-connectivity-sdk", version.ref = "segwayRobotBaseConnectivitySdk" }
 segway-robot-support-lib = { group = "com.segway.robot", name = "support-lib", version.ref = "segwayRobotSupportLib" }
+segway-robot-vision = { group = "com.segway.robot", name = "vision", version.ref = "segwayRobotVision" }
+segway-robot-basicclass = { group = "com.segway.robot", name = "basic-class", version.ref = "segwayRobotBasicClass" }
+segway-robot-sdkbase = { group = "com.segway.robot", name = "sdkbase", version.ref = "segwayRobotSdkBase" }
+slf4j = { group = "org.slf4j",  name = "slf4j-api", version.ref = "slf4jVer" }
+slf4j-android = { module = "uk.uuid.slf4j:slf4j-android", version.ref = "slf4jAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

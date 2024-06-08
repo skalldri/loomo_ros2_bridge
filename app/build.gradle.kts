@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.autom8ed.loomoros2bridge"
+    namespace = "com.autom8ed.lr2"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.autom8ed.loomoros2bridge"
+        applicationId = "com.autom8ed.lr2"
         minSdk = 22
         targetSdk = 34
         versionCode = 1
@@ -50,16 +50,43 @@ android {
 }
 
 dependencies {
+    // Logging framework, used by ROS2 and the Segway modules
+    implementation(libs.slf4j)
+    implementation(libs.slf4j.android)
 
+    // BEGIN SEGWAY LIBRARIES
 
     implementation(libs.segway.robot.visionsdk)
+    // Dupe of visionsdk, must have been renamed at some point. Lots of duplicate functions if this gets included
+    // implementation(libs.segway.robot.vision)
     implementation(libs.segway.robot.speech.sdk)
     implementation(libs.segway.robot.headsdk)
     implementation(libs.segway.robot.basesdk)
     implementation(libs.segway.robot.sensorsdk)
-    implementation(libs.segway.robot.robot.connectivity.sdk)
-    implementation(libs.segway.robot.mobile.connectivity.sdk)
     implementation(libs.segway.robot.support.lib)
+    implementation(libs.segway.robot.basicclass)
+    implementation(libs.segway.robot.sdkbase)
+    /*
+    // Not worth the pain. These cause issues with duplicate inclusion of "org.slf4j", and it seems like
+    // Kotlin's Gradle DSL doesn't provide good ways to avoid the conflict.
+    // Just comment these out, we don't need them / care about them.
+    implementation(libs.segway.robot.base.connectivity.sdk) {
+        exclude(group = "org.slf4j")
+    }
+    implementation(libs.segway.robot.robot.connectivity.sdk) {
+        exclude(group = "org.slf4j")
+    }
+    implementation(libs.segway.robot.mobile.connectivity.sdk) {
+        exclude(group = "org.slf4j")
+    }
+    */
+
+    // END SEGWAY LIBRARIES
+
+    // ROS2, pull it from the AAR file
+    implementation(group = "", name = "rclandroid-release", ext = "aar") {
+        exclude(group = "org.slf4j")
+    }
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -69,6 +96,8 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

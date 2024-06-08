@@ -1,4 +1,4 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
 class Orchestrator {
     /*

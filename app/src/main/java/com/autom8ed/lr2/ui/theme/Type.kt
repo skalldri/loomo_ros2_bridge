@@ -1,4 +1,4 @@
-package com.autom8ed.loomoros2bridge.ui.theme
+package com.autom8ed.lr2.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

@@ -1,5 +1,6 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
+import android.graphics.Bitmap
 import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder
 import com.segway.robot.sdk.vision.Vision;
@@ -8,11 +9,10 @@ import com.segway.robot.sdk.vision.calibration.MotionModuleCalibration
 import com.segway.robot.sdk.vision.frame.Frame
 import com.segway.robot.sdk.vision.stream.StreamInfo
 import com.segway.robot.sdk.vision.stream.StreamType
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.ros2.rcljava.publisher.Publisher
+import sensor_msgs.msg.Image
+import java.nio.ByteBuffer
 import java.util.EnumMap
 
 val CAMERA_INFO_TOPIC = "camera_info"
@@ -53,6 +53,13 @@ enum class Camera {
 
         override fun streamType(): Int { return StreamType.COLOR }
         override fun cameraFrameTopic(): String { return RGB_TOPIC }
+        override fun nativeEncoding(): String {
+            return "rgb8"
+        }
+
+        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+
+        }
     },
     DEPTH {
         private var mColorDepthCalibration: ColorDepthCalibration? = null
@@ -81,13 +88,37 @@ enum class Camera {
 
         override fun streamType(): Int { return StreamType.DEPTH }
         override fun cameraFrameTopic(): String { return MONO_TOPIC }
+        override fun nativeEncoding(): String {
+            return "16UC1"
+        }
+
+        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+
+        }
     },
     FISH_EYE {
         private var mMotionModuleCalibration: MotionModuleCalibration? = null
         private var mRosCalibration: RosCameraCalibration? = null
+        private var mBitmap: Bitmap? = null
+        private var mStreamInfo: StreamInfo? = null
 
         override fun initCache(vision: Vision) {
             mMotionModuleCalibration = vision.motionModuleCalibrationData
+            mStreamInfo = vision.getStreamInfo(StreamType.FISH_EYE)
+            mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.ALPHA_8)
+            Log.i("FISH_EYE", "Stream Info: ${mStreamInfo!!.width}x${mStreamInfo!!.height}")
+            Log.i("FISH_EYE", "Bitmap size: ${mBitmap!!.byteCount}")
+        }
+
+        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+            // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
+            // extract the data. This is expensive... but what can you do.
+            mBitmap!!.copyPixelsFromBuffer(frame.byteBuffer)
+            var bb: ByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
+            mBitmap!!.copyPixelsToBuffer(bb)
+            msg.data = bb.array().asList()
+
+            msg.header.frameId = "loomo_fisheye"
         }
 
         override fun getRosCameraCalibration(): RosCameraCalibration {
@@ -109,14 +140,21 @@ enum class Camera {
 
         override fun streamType(): Int { return StreamType.FISH_EYE }
         override fun cameraFrameTopic(): String { return RGB_TOPIC }
+        override fun nativeEncoding(): String {
+            return "8UC1"
+        }
     };
 
     abstract fun streamType(): Int
     abstract fun cameraFrameTopic(): String
 
+    abstract fun nativeEncoding(): String
+
     abstract fun getRosCameraCalibration(): RosCameraCalibration
 
     abstract fun initCache(vision: Vision)
+
+    abstract fun copyFrameToRosImage(frame: Frame, msg: sensor_msgs.msg.Image)
 }
 
 class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
@@ -127,6 +165,7 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
         private val mNode: RosNode = node
         private val mTopic: String = topic
         private val mFramePublisher: Publisher<sensor_msgs.msg.Image>
+        private val mCompressedFramePublisher: Publisher<sensor_msgs.msg.CompressedImage>
         private val mInfoPublisher: Publisher<sensor_msgs.msg.CameraInfo>
         private val TAG: String = "CamPub_" + mCamera.name
 
@@ -134,31 +173,42 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
             Log.i(TAG, "Created Camera Publisher for Camera " + mCamera.name);
             val info: StreamInfo = mVision.getStreamInfo(mCamera.streamType())
             Log.i(TAG, "StreamInfo: $info");
+            // TODO: need to support image_depth
             mFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.Image::class.java,
                 "$mTopic/image_color"
             )
+            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, "$mTopic/image_compressed")
             mInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
                 "$mTopic/camera_info"
             )
         }
 
         override fun onNewFrame(streamType: Int, frame: Frame?) {
+            if (frame == null) {
+                return
+            }
+
             // Convert the frame to a ROS format
 
             // Publish it via the node
             //mFramePublisher.publish("Got frame " + frame?.info.toString())
 
             Log.i(TAG, "Got new frame: $streamType");
+            Log.i(TAG, "Resolution: ${frame.info.resolution}");
+            Log.i(TAG, "IMU Timestamp: ${frame.info.imuTimeStamp}");
+            Log.i(TAG, "Platform Timestamp: ${frame.info.platformTimeStamp}");
+
+            val rawMsg: sensor_msgs.msg.Image = sensor_msgs.msg.Image()
+            rawMsg.setEncoding(mCamera.nativeEncoding())
+            mCamera.copyFrameToRosImage(frame, rawMsg)
+
+            mFramePublisher.publish(rawMsg)
+            // var compressed_msg: sensor_msgs.msg.CompressedImage = sensor_msgs.msg.CompressedImage()
         }
 
         fun startPublishing() {
-            mVision.startListenFrame(mCamera.streamType(), this);
-
-            // TODO: setup topic publisher
-
-            // TODO: publish camera_info with camera extrinsics/intrinsics\
             mCamera.initCache(mVision)
-            //mCameraInfoPublisher.publish("Camera Info: ")
+            mVision.startListenFrame(mCamera.streamType(), this);
         }
 
         fun stopPublishing() {

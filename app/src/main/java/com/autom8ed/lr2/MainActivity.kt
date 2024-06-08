@@ -1,10 +1,7 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
-import android.R
 import android.os.Bundle
 import android.os.Handler
-import android.view.View
-import android.widget.Button
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,7 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import com.autom8ed.loomoros2bridge.ui.theme.LoomoROS2BridgeTheme
+import com.autom8ed.lr2.ui.theme.LoomoROS2BridgeTheme
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch

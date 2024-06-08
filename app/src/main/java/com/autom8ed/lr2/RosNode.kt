@@ -1,9 +1,8 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
 import android.util.Log
 import org.ros2.rcljava.node.BaseComposableNode
 import org.ros2.rcljava.publisher.Publisher
-import org.ros2.rcljava.subscription.Subscription
 import org.ros2.rcljava.timer.WallTimer
 import java.util.concurrent.TimeUnit
 

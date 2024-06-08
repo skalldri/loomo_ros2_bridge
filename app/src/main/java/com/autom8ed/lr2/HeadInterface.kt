@@ -1,4 +1,4 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
 import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder

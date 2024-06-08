@@ -1,4 +1,4 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -19,6 +19,6 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("com.autom8ed.loomoros2bridge", appContext.packageName)
+        assertEquals("com.autom8ed.lr2", appContext.packageName)
     }
 }

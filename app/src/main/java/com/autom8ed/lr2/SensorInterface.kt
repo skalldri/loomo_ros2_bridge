@@ -1,7 +1,6 @@
-package com.autom8ed.loomoros2bridge
+package com.autom8ed.lr2
 
 import android.util.Log
-import com.segway.robot.algo.tf.AlgoTfRequest
 import com.segway.robot.sdk.base.bind.ServiceBinder
 import com.segway.robot.sdk.perception.sensor.RobotAllSensors
 import com.segway.robot.sdk.perception.sensor.Sensor

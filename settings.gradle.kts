@@ -12,11 +12,14 @@ pluginManagement {
     }
 }
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        jcenter()
+        maven { url = uri("${rootDir}/deps/localmaven") }
+        flatDir {
+            name = "rclandroid-folder"
+            dirs("${rootDir}/deps/rclandroid")
+        }
     }
 }
 
