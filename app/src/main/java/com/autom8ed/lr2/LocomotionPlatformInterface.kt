@@ -1,15 +1,17 @@
 package com.autom8ed.loomoros2bridge
 
+import android.R.id.message
 import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder.BindStateListener
 import com.segway.robot.sdk.locomotion.sbv.Base
 
 
-class LocomotionPlatformInterface constructor(ctx: android.content.Context) {
+class LocomotionPlatformInterface constructor(ctx: android.content.Context, node: RosNode) {
     // get Locomotion SDK instance
     private var mBase: Base = Base.getInstance();
     private var mBindLocomotionListener: BindStateListener;
     val TAG: String = "LocomotionPlatformIface"
+    val mNode: RosNode = node
 
     init {
         mBindLocomotionListener = object : BindStateListener {
@@ -40,5 +42,14 @@ class LocomotionPlatformInterface constructor(ctx: android.content.Context) {
 
         // Connect to the service
         mBase.bindService(ctx, mBindLocomotionListener);
+
+        // Subscribe to the /cmd_vel ros topic
+        this.mNode.node.createSubscription(geometry_msgs.msg.Twist::class.java, "cmd_vel") { msg: geometry_msgs.msg.Twist ->
+            // Only submit messages if we're connected to the service
+            if (mBase.isBind) {
+                mBase.setLinearVelocity(msg.linear.x.toFloat())
+                mBase.setAngularVelocity(msg.angular.z.toFloat())
+            }
+        }
     }
 }
