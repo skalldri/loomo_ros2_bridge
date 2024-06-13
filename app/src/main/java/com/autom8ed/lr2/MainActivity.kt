@@ -1,5 +1,6 @@
 package com.autom8ed.lr2
 
+import android.media.MediaCodecList
 import android.os.Bundle
 import android.os.Handler
 import androidx.activity.ComponentActivity
@@ -19,15 +20,19 @@ import kotlinx.coroutines.launch
 import org.ros2.android.activity.ROSActivity
 import org.ros2.rcljava.RCLJava
 import org.ros2.rcljava.executors.Executor
+import org.ros2.rcljava.executors.MultiThreadedExecutor
 import org.ros2.rcljava.executors.SingleThreadedExecutor
 import java.util.Timer
 import java.util.TimerTask
+import android.util.Log
 
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var mVisionInterface: VisionInterface;
-    private lateinit var mLocomotionPlatformInterface: LocomotionPlatformInterface;
+    private lateinit var mVisionInterface: VisionInterface
+    private lateinit var mLocomotionPlatformInterface: LocomotionPlatformInterface
+    private lateinit var mSensorInterface: SensorInterface
+    private lateinit var mTfPublisher: TfPublisher
 
     private lateinit var mNode: RosNode
 
@@ -35,7 +40,7 @@ class MainActivity : ComponentActivity() {
     private var timer: Timer? = null
     private var handler: Handler? = null
 
-    private val logtag: String = ROSActivity::class.java.name
+    private val TAG: String = ROSActivity::class.java.name
 
     private val SPINNER_DELAY: Long = 0
     private val SPINNER_PERIOD_MS: Long = 200
@@ -49,7 +54,10 @@ class MainActivity : ComponentActivity() {
 
         // Must be called before RCLJava.rclJavaInit() to override the automatic DDS/RTPS discovery
         // protocol!
-        android.system.Os.setenv("ROS_DISCOVERY_SERVER", "192.168.1.36:11811", true)
+        // Desktop
+        // android.system.Os.setenv("ROS_DISCOVERY_SERVER", "192.168.1.36:11811", true)
+        // Jetson
+        android.system.Os.setenv("ROS_DISCOVERY_SERVER", "10.0.0.1:11811", true)
 
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
@@ -69,18 +77,23 @@ class MainActivity : ComponentActivity() {
         mNode = RosNode("loomo_node")
         changeState(true);
 
+        mTfPublisher = TfPublisher(this, mNode)
+
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        mVisionInterface = VisionInterface(this, mNode)
+        mVisionInterface = VisionInterface(this, mNode, mTfPublisher)
+        mSensorInterface = SensorInterface(this, mNode)
 
         GlobalScope.launch {
-            //mVisionInterface.startCameraStream(Camera.DEPTH, "realsense_depth")
-            mVisionInterface.startCameraStream(Camera.FISH_EYE, "fisheye")
+            mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
+            mVisionInterface.startCameraStream(Camera.DEPTH, "/loomo")
+            mVisionInterface.startCameraStream(Camera.FISH_EYE, "/loomo")
         }
 
-        //    mVisionInterface.startCameraStream(Camera.FISH_EYE, "fisheye")
-        //    mVisionInterface.startCameraStream(Camera.COLOR, "realsense_color")
-        // }
+        val list = MediaCodecList(MediaCodecList.ALL_CODECS)
+        for (cd in list.codecInfos) {
+            Log.i(TAG, "Found Codec: ${cd.name}")
+        }
     }
 
     override fun onResume() {
@@ -119,7 +132,8 @@ class MainActivity : ComponentActivity() {
     }
 
     protected fun createExecutor(): Executor {
-        return SingleThreadedExecutor()
+        //return SingleThreadedExecutor()
+        return MultiThreadedExecutor()
     }
 
     protected fun getDelay(): Long {

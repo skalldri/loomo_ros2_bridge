@@ -3,7 +3,7 @@ package com.autom8ed.lr2
 import android.graphics.Bitmap
 import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder
-import com.segway.robot.sdk.vision.Vision;
+import com.segway.robot.sdk.vision.Vision
 import com.segway.robot.sdk.vision.calibration.ColorDepthCalibration
 import com.segway.robot.sdk.vision.calibration.MotionModuleCalibration
 import com.segway.robot.sdk.vision.frame.Frame
@@ -13,174 +13,356 @@ import kotlinx.coroutines.delay
 import org.ros2.rcljava.publisher.Publisher
 import sensor_msgs.msg.Image
 import java.nio.ByteBuffer
+import java.nio.channels.Channels
+import java.nio.channels.WritableByteChannel
 import java.util.EnumMap
 
-val CAMERA_INFO_TOPIC = "camera_info"
-val RGB_TOPIC = "rgb"
-val MONO_TOPIC = "mono"
 
-class RosCameraCalibration {
-    var k: Array<Float> = Array<Float>(3*3) { 0.0F }
-    var d: Array<Float> = Array<Float>(5) { 0.0F }
-    var p: Array<Float> = Array<Float>(3*4) { 0.0F }
-}
+val CAMERA_INFO_TOPIC = "camera_info"
+
+val REALSENSE_TOPIC = "realsense"
+val REALSENSE_DEPTH_NAMESPACE = "depth"
+val REALSENSE_COLOR_NAMESPACE = "color"
+
+val FISHEYE_TOPIC = "fisheye"
+
+// Per ROS CameraInfo topic specification:
+// image: monochrome, distorted
+// image_rect: monochrome, rectified
+// image_color: color, distorted
+// image_color_rect: color, rectified
+//
+// By convention of the Realsense driver, publish the
+// depth image as a monochrome or raw image
+
+val IMAGE_TOPIC_SUFFIX_COLOR = "_color"
+val IMAGE_ENCODING_COLOR = "rgba8"
+
+val IMAGE_TOPIC_SUFFIX_MONO = ""
+val IMAGE_ENCODING_MONO = "mono8"
+
+val IMAGE_TOPIC_SUFFIX_DEPTH = "_depth"
+val IMAGE_ENCODING_DEPTH = "16UC1"
 
 enum class Camera {
     COLOR {
         private var mColorDepthCalibration: ColorDepthCalibration? = null
-        private var mRosCalibration: RosCameraCalibration? = null
+        private var mStreamInfo: StreamInfo? = null
+        private var mBitmap: Bitmap? = null
+        private var mByteBuffer: ByteBuffer? = null
 
         override fun initCache(vision: Vision) {
             mColorDepthCalibration = vision.colorDepthCalibrationData
-        }
-
-        override fun getRosCameraCalibration(): RosCameraCalibration {
-            if (mRosCalibration != null) {
-                return mRosCalibration as RosCameraCalibration
-            }
-
-            if (mColorDepthCalibration == null) {
-                throw IllegalStateException("No cached calibration to process!")
-            }
-
-            // First time we got called... calculate the camera calibration
-            mRosCalibration = RosCameraCalibration()
-
-            // TODO: consume mColorDepthCalibration to compute calibration
-
-            return mRosCalibration as RosCameraCalibration
+            mStreamInfo = vision.getStreamInfo(StreamType.COLOR)
+            mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.ARGB_8888)
+            mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
         }
 
         override fun streamType(): Int { return StreamType.COLOR }
-        override fun cameraFrameTopic(): String { return RGB_TOPIC }
-        override fun nativeEncoding(): String {
-            return "rgb8"
+        override fun cameraFrameTopicNamespace(): String { return "$REALSENSE_TOPIC/$REALSENSE_COLOR_NAMESPACE" }
+        override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_COLOR }
+        override fun nativeEncoding(): String { return IMAGE_ENCODING_COLOR }
+
+        override fun fillRosMessage(frame: Frame, msg: Image) {
+            // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
+            // extract the data. This is expensive... but what can you do.
+            // TODO: figure out how to avoid this double-copy
+            mBitmap!!.copyPixelsFromBuffer(frame.byteBuffer)
+
+            // Reset position within the byte-buffer so that we overwrite everything
+            mByteBuffer!!.position(0)
+
+            // Copy from Bitmap -> Buffer
+            mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
+
+            // Assign to ROS msg
+            msg.data = mByteBuffer!!.array().asList()
+
+            msg.header.frameId = TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID
+            msg.encoding = this.nativeEncoding()
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
+            msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
         }
 
-        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+            msg.header.frameId = TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
 
+            val intrinsic = mColorDepthCalibration!!.colorIntrinsic
+
+            // Intrinsic camera matrix for the raw (distorted) images.
+            //     [fx  0 cx]
+            // K = [ 0 fy cy]
+            //     [ 0  0  1]
+            // Stored as a flat array of 9 float64 (doubles)
+            // Row-major order
+            val k = Array<Double>(9) { 0.0 }
+            k[0] = intrinsic.focalLength.x.toDouble()
+            k[4] = intrinsic.focalLength.y.toDouble()
+            k[2] = intrinsic.principal.x.toDouble()
+            k[5] = intrinsic.principal.y.toDouble()
+            k[8] = 1.0
+            msg.k = k.asList()
+
+            // For depth processing, the P matrix is the most important to publish
+            // Projection/camera matrix
+            //     [fx'  0  cx' Tx]
+            // P = [ 0  fy' cy' Ty]
+            //     [ 0   0   1   0]
+            //
+            // For monocular cameras, Tx = Ty = 0
+            //
+            var p = Array<Double>(12) { 0.0 }
+            // fx'
+            p[0] = intrinsic.focalLength.x.toDouble()
+            // cx'
+            p[2] = intrinsic.principal.x.toDouble()
+            // Tx
+            p[3] = 0.0
+            // fy'
+            p[5] = intrinsic.focalLength.y.toDouble()
+            // cy'
+            p[6] = intrinsic.principal.y.toDouble()
+            // Ty
+            p[7] = 0.0
+            p[10] = 1.0
+            msg.p = p.asList()
+
+            val d = Array<Double>(5) { 0.0 }
+
+            // Depth camera has valid distortion coefficients
+            for (i in 0..4) {
+                d[i] = intrinsic.distortion.value[i].toDouble()
+            }
+
+            msg.d = d.asList()
         }
     },
     DEPTH {
         private var mColorDepthCalibration: ColorDepthCalibration? = null
-        private var mRosCalibration: RosCameraCalibration? = null
+        private var mStreamInfo: StreamInfo? = null
+        private var mBitmap: Bitmap? = null
+        private var mByteBuffer: ByteBuffer? = null
 
         override fun initCache(vision: Vision) {
             mColorDepthCalibration = vision.colorDepthCalibrationData
-        }
-
-        override fun getRosCameraCalibration(): RosCameraCalibration {
-            if (mRosCalibration != null) {
-                return mRosCalibration as RosCameraCalibration
-            }
-
-            if (mColorDepthCalibration == null) {
-                throw IllegalStateException("No cached calibration to process!")
-            }
-
-            // First time we got called... calculate the camera calibration
-            mRosCalibration = RosCameraCalibration()
-
-            // TODO: consume mColorDepthCalibration to compute calibration
-
-            return mRosCalibration as RosCameraCalibration
+            mStreamInfo = vision.getStreamInfo(StreamType.DEPTH)
+            mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.RGB_565)
+            mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
         }
 
         override fun streamType(): Int { return StreamType.DEPTH }
-        override fun cameraFrameTopic(): String { return MONO_TOPIC }
-        override fun nativeEncoding(): String {
-            return "16UC1"
+        override fun cameraFrameTopicNamespace(): String { return "$REALSENSE_TOPIC/$REALSENSE_DEPTH_NAMESPACE" }
+        override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_DEPTH }
+        override fun nativeEncoding(): String { return IMAGE_ENCODING_DEPTH }
+
+        override fun fillRosMessage(frame: Frame, msg: Image) {
+            // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
+            // extract the data. This is expensive... but what can you do.
+            // TODO: figure out how to avoid this double-copy
+            mBitmap!!.copyPixelsFromBuffer(frame.byteBuffer)
+
+            // Reset position within the byte-buffer so that we overwrite everything
+            mByteBuffer!!.clear()
+
+            // Copy from Bitmap -> Buffer
+            mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
+
+            // Assign to ROS msg
+            msg.data = mByteBuffer!!.array().asList()
+
+            msg.header.frameId = TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID
+            msg.encoding = this.nativeEncoding()
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
+            msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
         }
 
-        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+            msg.header.frameId = TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
 
+            val intrinsic = mColorDepthCalibration!!.depthIntrinsic
+
+            // Intrinsic camera matrix for the raw (distorted) images.
+            //     [fx  0 cx]
+            // K = [ 0 fy cy]
+            //     [ 0  0  1]
+            // Stored as a flat array of 9 float64 (doubles)
+            // Row-major order
+            val k = Array<Double>(9) { 0.0 }
+            k[0] = intrinsic.focalLength.x.toDouble()
+            k[4] = intrinsic.focalLength.y.toDouble()
+            k[2] = intrinsic.principal.x.toDouble()
+            k[5] = intrinsic.principal.y.toDouble()
+            k[8] = 1.0
+            msg.k = k.asList()
+
+            // For depth processing, the P matrix is the most important to publish
+            // Projection/camera matrix
+            //     [fx'  0  cx' Tx]
+            // P = [ 0  fy' cy' Ty]
+            //     [ 0   0   1   0]
+            //
+            // For monocular cameras, Tx = Ty = 0
+            //
+            var p = Array<Double>(12) { 0.0 }
+            // fx'
+            p[0] = intrinsic.focalLength.x.toDouble()
+            // cx'
+            p[2] = intrinsic.principal.x.toDouble()
+            // Tx
+            p[3] = 0.0
+            // fy'
+            p[5] = intrinsic.focalLength.y.toDouble()
+            // cy'
+            p[6] = intrinsic.principal.y.toDouble()
+            // Ty
+            p[7] = 0.0
+            p[10] = 1.0
+            msg.p = p.asList()
+
+            val d = Array<Double>(5) { 0.0 }
+
+            // Depth camera has valid distortion coefficients
+            for (i in 0..4) {
+                d[i] = intrinsic.distortion.value[i].toDouble()
+            }
+
+            msg.d = d.asList()
         }
     },
     FISH_EYE {
         private var mMotionModuleCalibration: MotionModuleCalibration? = null
-        private var mRosCalibration: RosCameraCalibration? = null
-        private var mBitmap: Bitmap? = null
         private var mStreamInfo: StreamInfo? = null
+        private var mBitmap: Bitmap? = null
+        private var mByteBuffer: ByteBuffer? = null
 
         override fun initCache(vision: Vision) {
             mMotionModuleCalibration = vision.motionModuleCalibrationData
             mStreamInfo = vision.getStreamInfo(StreamType.FISH_EYE)
             mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.ALPHA_8)
-            Log.i("FISH_EYE", "Stream Info: ${mStreamInfo!!.width}x${mStreamInfo!!.height}")
-            Log.i("FISH_EYE", "Bitmap size: ${mBitmap!!.byteCount}")
+            mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
         }
 
-        override fun copyFrameToRosImage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: Image) {
             // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
             // extract the data. This is expensive... but what can you do.
+            // TODO: figure out how to avoid this double-copy
             mBitmap!!.copyPixelsFromBuffer(frame.byteBuffer)
-            var bb: ByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
-            mBitmap!!.copyPixelsToBuffer(bb)
-            msg.data = bb.array().asList()
 
-            msg.header.frameId = "loomo_fisheye"
+            // Reset position within the byte-buffer so that we overwrite everything
+            mByteBuffer!!.clear()
+
+            // Copy from Bitmap -> Buffer
+            mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
+
+            // Assign to ROS msg
+            msg.data = mByteBuffer!!.array().asList()
+
+            msg.header.frameId = TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID
+            msg.encoding = this.nativeEncoding()
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
+            msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
         }
 
-        override fun getRosCameraCalibration(): RosCameraCalibration {
-            if (mRosCalibration != null) {
-                return mRosCalibration as RosCameraCalibration
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+            msg.header.frameId = TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID
+            msg.height = mStreamInfo!!.height
+            msg.width = mStreamInfo!!.width
+
+            // Intrinsic camera matrix for the raw (distorted) images.
+            //     [fx  0 cx]
+            // K = [ 0 fy cy]
+            //     [ 0  0  1]
+            // Stored as a flat array of 9 float64 (doubles)
+            // Row-major order
+            var k = Array<Double>(9) { 0.0 }
+            for (row: Int in 0..2) {
+                for (col: Int in 0..2) {
+                    k[(row * 3) + col] = mMotionModuleCalibration!!.fishEyeIntrinsics.kf.matrix[row][col].toDouble()
+                }
             }
 
-            if (mMotionModuleCalibration == null) {
-                throw IllegalStateException("No cached calibration to process!")
-            }
+            msg.k = k.asList()
 
-            // First time we got called... calculate the camera calibration
-            mRosCalibration = RosCameraCalibration()
+            var d = Array<Double>(5) { 0.0 }
 
-            // TODO: consume mColorDepthCalibration to compute calibration
+            // d[0] = mMotionModuleCalibration!!.fishEyeIntrinsics.distortion.value[0].toDouble()
+            // TODO: My Loomo has NaN for the other 4 distortion parameters...
 
-            return mRosCalibration as RosCameraCalibration
+            msg.d = d.asList()
+            msg.distortionModel = "plumb_bob"
         }
 
         override fun streamType(): Int { return StreamType.FISH_EYE }
-        override fun cameraFrameTopic(): String { return RGB_TOPIC }
-        override fun nativeEncoding(): String {
-            return "8UC1"
-        }
+        override fun cameraFrameTopicNamespace(): String { return FISHEYE_TOPIC }
+        override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_MONO }
+        override fun nativeEncoding(): String { return IMAGE_ENCODING_MONO }
     };
 
     abstract fun streamType(): Int
-    abstract fun cameraFrameTopic(): String
+
+    /**
+     * The topic-namespace for this camera.
+     *
+     * We will produce a topics in the format:
+     * /loomo/<namespace>/camera_info
+     * /loomo/<namespace>/image_<suffix>
+     */
+    abstract fun cameraFrameTopicNamespace(): String
+
+    /**
+     * The topic-suffix for this camera's frame output.
+     *
+     * We will produce a topics in the format:
+     * /loomo/<namespace>/camera_info
+     * /loomo/<namespace>/image_<suffix>
+    */
+    abstract fun cameraFrameTopicSuffix(): String
 
     abstract fun nativeEncoding(): String
 
-    abstract fun getRosCameraCalibration(): RosCameraCalibration
-
     abstract fun initCache(vision: Vision)
 
-    abstract fun copyFrameToRosImage(frame: Frame, msg: sensor_msgs.msg.Image)
+    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.Image)
+
+    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo)
 }
 
-class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
+class VisionInterface constructor(ctx: android.content.Context, node: RosNode, tfPublisher: TfPublisher) {
 
-    private class CameraPublisherContext constructor(vision: Vision, camera: Camera, topic: String, node: RosNode) : Vision.FrameListener {
+    private class CameraPublisherContext constructor(vision: Vision, camera: Camera, topic: String, node: RosNode, tfPublisher: TfPublisher) : Vision.FrameListener {
         private val mVision: Vision = vision
         private val mCamera: Camera = camera
         private val mNode: RosNode = node
         private val mTopic: String = topic
         private val mFramePublisher: Publisher<sensor_msgs.msg.Image>
         private val mCompressedFramePublisher: Publisher<sensor_msgs.msg.CompressedImage>
-        private val mInfoPublisher: Publisher<sensor_msgs.msg.CameraInfo>
+        private val mCameraInfoPublisher: Publisher<sensor_msgs.msg.CameraInfo>
+        private val mTfPublisher: TfPublisher = tfPublisher
         private val TAG: String = "CamPub_" + mCamera.name
 
         init {
-            Log.i(TAG, "Created Camera Publisher for Camera " + mCamera.name);
-            val info: StreamInfo = mVision.getStreamInfo(mCamera.streamType())
-            Log.i(TAG, "StreamInfo: $info");
-            // TODO: need to support image_depth
+            val rawFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}"
             mFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.Image::class.java,
-                "$mTopic/image_color"
+                rawFrameTopic
             )
-            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, "$mTopic/image_compressed")
-            mInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
-                "$mTopic/camera_info"
+            Log.i(TAG, "${mCamera.name}: created topic $rawFrameTopic")
+
+            val compressedFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image_compressed"
+            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic)
+            Log.i(TAG, "${mCamera.name}: created topic $compressedFrameTopic");
+
+            val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/$CAMERA_INFO_TOPIC"
+            mCameraInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
+                cameraInfoTopic
             )
+            Log.i(TAG, "${mCamera.name}: created topic $cameraInfoTopic");
         }
 
         override fun onNewFrame(streamType: Int, frame: Frame?) {
@@ -188,22 +370,19 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
                 return
             }
 
-            // Convert the frame to a ROS format
-
-            // Publish it via the node
-            //mFramePublisher.publish("Got frame " + frame?.info.toString())
-
-            Log.i(TAG, "Got new frame: $streamType");
-            Log.i(TAG, "Resolution: ${frame.info.resolution}");
-            Log.i(TAG, "IMU Timestamp: ${frame.info.imuTimeStamp}");
-            Log.i(TAG, "Platform Timestamp: ${frame.info.platformTimeStamp}");
+            // Tell the TF publisher we need a transform at this time
+            // TODO: can we submit other cameras?
+            if (mCamera == Camera.DEPTH) {
+                mTfPublisher.indicateTfNeededAtTime(frame.info.platformTimeStamp)
+            }
 
             val rawMsg: sensor_msgs.msg.Image = sensor_msgs.msg.Image()
-            rawMsg.setEncoding(mCamera.nativeEncoding())
-            mCamera.copyFrameToRosImage(frame, rawMsg)
-
+            mCamera.fillRosMessage(frame, rawMsg)
             mFramePublisher.publish(rawMsg)
-            // var compressed_msg: sensor_msgs.msg.CompressedImage = sensor_msgs.msg.CompressedImage()
+
+            val cameraInfoMsg: sensor_msgs.msg.CameraInfo = sensor_msgs.msg.CameraInfo()
+            mCamera.fillRosMessage(frame, cameraInfoMsg)
+            mCameraInfoPublisher.publish(cameraInfoMsg)
         }
 
         fun startPublishing() {
@@ -220,6 +399,7 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
     private var mBindVisionListener: ServiceBinder.BindStateListener;
     private var mPublishers: EnumMap<Camera, CameraPublisherContext> =
         EnumMap(Camera::class.java);
+    private val mTfPublisher: TfPublisher = tfPublisher
 
     val TAG: String = "VisionIface"
     private var mNode: RosNode = node
@@ -239,15 +419,6 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
         if (!mVision.bindService(ctx, mBindVisionListener)) {
             throw IllegalStateException("Failed to bind to vision service")
         }
-
-        // RealSense color images
-        // startCameraStream(StreamType.COLOR)
-        // RealSense depth images
-        // startCameraStream(StreamType.DEPTH)
-        // Fisheye camera: 640*480 (really? seems small...)
-        //CoroutineScope(Dispatchers.IO).launch {
-        //    startCameraStream(Camera.FISH_EYE, "fisheye")
-        //}
     }
 
     // On Suspend: unbind the service
@@ -268,7 +439,7 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode) {
             delay(100);
         }
 
-        mPublishers[camera] = CameraPublisherContext(mVision, camera, topic, mNode)
+        mPublishers[camera] = CameraPublisherContext(mVision, camera, topic, mNode, mTfPublisher)
         mPublishers[camera]!!.startPublishing()
     }
 
