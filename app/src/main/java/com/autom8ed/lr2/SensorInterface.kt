@@ -4,6 +4,7 @@ import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder
 import com.segway.robot.sdk.perception.sensor.RobotAllSensors
 import com.segway.robot.sdk.perception.sensor.Sensor
+import com.segway.robot.sdk.perception.sensor.SensorData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -11,10 +12,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ros2.rcljava.publisher.Publisher
 import tf2_msgs.msg.TFMessage
+import java.lang.Math.toRadians
+import java.util.Arrays
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-class SensorInterface constructor(ctx: android.content.Context, node: RosNode) {
+class SensorInterface (ctx: android.content.Context, node: RosNode) {
     private var mBindSensorListener: ServiceBinder.BindStateListener;
     private var mSensor: Sensor = Sensor.getInstance()
     private val TAG: String = "SensorIface"
@@ -24,6 +27,9 @@ class SensorInterface constructor(ctx: android.content.Context, node: RosNode) {
     private var mThread: Thread? = null
     private val mThreadRun: AtomicBoolean = AtomicBoolean(true)
     private val mNode: RosNode = node
+
+    private val mIrFov: Double = 5.0
+    private val mUltrasonicFov: Double = 30.0
 
     private var mUltrasonicPublisher: Publisher<sensor_msgs.msg.Range>
     private var mIrLeftPublisher: Publisher<sensor_msgs.msg.Range>
@@ -130,7 +136,7 @@ class SensorInterface constructor(ctx: android.content.Context, node: RosNode) {
         ussRangeMsg.header.frameId = TfPublisherConstants.ULTRASONIC_FRAME_ID
         // TODO header.timestamp
         ussRangeMsg.radiationType = sensor_msgs.msg.Range.ULTRASOUND
-        ussRangeMsg.fieldOfView = 15.0f // 15 degree cone, TODO: total guess
+        ussRangeMsg.fieldOfView = toRadians(mUltrasonicFov).toFloat() // 15 degree cone, TODO: total guess
         ussRangeMsg.minRange = 0.3f // Approximately measure, min value seen from Loomo API ~24cm
         ussRangeMsg.maxRange = 1.5f // Max value seen from Loomo API
         ussRangeMsg.range = (ultrasonicData.distance / 1000.0f) // Loomo returns in mm, ROS expects m
@@ -140,7 +146,7 @@ class SensorInterface constructor(ctx: android.content.Context, node: RosNode) {
         irLeftRangeMsg.header.frameId = TfPublisherConstants.IR_LEFT_FRAME_ID
         // TODO header.timestamp
         irLeftRangeMsg.radiationType = sensor_msgs.msg.Range.INFRARED
-        irLeftRangeMsg.fieldOfView = 30.0f // 30 degree cone, TODO: total guess
+        irLeftRangeMsg.fieldOfView = toRadians(mIrFov).toFloat() // 30 degree cone, TODO: total guess
         irLeftRangeMsg.minRange = 0.2f // 20cm, TODO: total guess
         irLeftRangeMsg.maxRange = 5f // 5m, TODO: total guess
         irLeftRangeMsg.range = (infraredData.leftDistance / 1000.0f) // Loomo returns in mm, ROS expects m
@@ -150,10 +156,21 @@ class SensorInterface constructor(ctx: android.content.Context, node: RosNode) {
         irRightRangeMsg.header.frameId = TfPublisherConstants.IR_RIGHT_FRAME_ID
         // TODO header.timestamp
         irRightRangeMsg.radiationType = sensor_msgs.msg.Range.INFRARED
-        irRightRangeMsg.fieldOfView = 30.0f // 30 degree cone, TODO: total guess
+        irRightRangeMsg.fieldOfView =
+            toRadians(mIrFov).toFloat() // 30 degree cone, TODO: total guess
         irRightRangeMsg.minRange = 0.2f // 20cm, TODO: total guess
         irRightRangeMsg.maxRange = 5f // 5m, TODO: total guess
         irRightRangeMsg.range = (infraredData.rightDistance / 1000.0f) // Loomo returns in mm, ROS expects m
         mIrRightPublisher.publish(irRightRangeMsg)
+    }
+
+    fun getBaseImu(): SensorData {
+        val sensorData: SensorData = mSensor.querySensorData(listOf(Sensor.BASE_IMU))[0]
+        return sensorData
+    }
+
+    fun getHeadImu(): SensorData {
+        val sensorData: SensorData = mSensor.querySensorData(listOf(Sensor.HEAD_WORLD_IMU))[0]
+        return sensorData
     }
 }

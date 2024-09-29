@@ -5,7 +5,7 @@ import com.segway.robot.sdk.base.bind.ServiceBinder.BindStateListener
 import com.segway.robot.sdk.locomotion.sbv.Base
 
 
-class LocomotionPlatformInterface constructor(ctx: android.content.Context, node: RosNode) {
+class LocomotionPlatformInterface(ctx: android.content.Context, node: RosNode) {
     // get Locomotion SDK instance
     private var mBase: Base = Base.getInstance();
     private var mBindLocomotionListener: BindStateListener;
@@ -43,11 +43,17 @@ class LocomotionPlatformInterface constructor(ctx: android.content.Context, node
         mBase.bindService(ctx, mBindLocomotionListener);
 
         // Subscribe to the /cmd_vel ros topic
-        this.mNode.node.createSubscription(geometry_msgs.msg.Twist::class.java, "cmd_vel") { msg: geometry_msgs.msg.Twist ->
+        mNode.node.createSubscription(geometry_msgs.msg.Twist::class.java, "/cmd_vel") { msg: geometry_msgs.msg.Twist ->
             // Only submit messages if we're connected to the service
             if (mBase.isBind) {
                 mBase.setLinearVelocity(msg.linear.x.toFloat())
                 mBase.setAngularVelocity(msg.angular.z.toFloat())
+            }
+        }
+
+        mNode.node.createSubscription(std_msgs.msg.Bool::class.java, "/loomo/body_light") { msg: std_msgs.msg.Bool ->
+            if (mBase.isBind) {
+                mBase.enableBodyLight(msg.data)
             }
         }
     }

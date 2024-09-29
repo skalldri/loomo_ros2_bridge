@@ -21,9 +21,7 @@ import org.ros2.android.activity.ROSActivity
 import org.ros2.rcljava.RCLJava
 import org.ros2.rcljava.executors.Executor
 import org.ros2.rcljava.executors.MultiThreadedExecutor
-import org.ros2.rcljava.executors.SingleThreadedExecutor
 import java.util.Timer
-import java.util.TimerTask
 import android.util.Log
 
 
@@ -33,6 +31,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var mLocomotionPlatformInterface: LocomotionPlatformInterface
     private lateinit var mSensorInterface: SensorInterface
     private lateinit var mTfPublisher: TfPublisher
+    private lateinit var mTimeSync: TimeSync
+    private lateinit var mHeadInterface: HeadInterface
+    private lateinit var mAudioInterface: AudioInterface
+    private lateinit var mWatchdog: Watchdog
 
     private lateinit var mNode: RosNode
 
@@ -43,7 +45,7 @@ class MainActivity : ComponentActivity() {
     private val TAG: String = ROSActivity::class.java.name
 
     private val SPINNER_DELAY: Long = 0
-    private val SPINNER_PERIOD_MS: Long = 200
+    private val SPINNER_PERIOD_MS: Long = 10
 
     private var isWorking = false
 
@@ -57,7 +59,14 @@ class MainActivity : ComponentActivity() {
         // Desktop
         // android.system.Os.setenv("ROS_DISCOVERY_SERVER", "192.168.1.36:11811", true)
         // Jetson
-        android.system.Os.setenv("ROS_DISCOVERY_SERVER", "10.0.0.1:11811", true)
+        // android.system.Os.setenv("ROS_DISCOVERY_SERVER", "10.0.0.1:11811", true)
+
+        // Set ROS_DOMAIN_ID so that the robot runs on an isolated DDS network
+        // Other nodes will not attempt to talk directly with the robot, instead they must go through
+        // the DDS-Router on the Jetson
+        android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
+
+        // android.system.Os.setenv("ROS_STATIC_PEERS", "192.168.1.174", true)
 
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
@@ -74,18 +83,26 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        mTimeSync = TimeSync()
+
         mNode = RosNode("loomo_node")
         changeState(true);
 
-        mTfPublisher = TfPublisher(this, mNode)
+        mHeadInterface = HeadInterface(this, mNode)
+
+        mAudioInterface = AudioInterface(this, mNode)
+
+        mSensorInterface = SensorInterface(this, mNode)
+
+        mTfPublisher = TfPublisher(this, mNode, mSensorInterface)
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        mVisionInterface = VisionInterface(this, mNode, mTfPublisher)
-        mSensorInterface = SensorInterface(this, mNode)
+        mVisionInterface = VisionInterface(this, mNode, mTfPublisher, mTimeSync)
 
         GlobalScope.launch {
-            mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
+            // Color camera publishes too slow to be of much use...
+            // mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
             mVisionInterface.startCameraStream(Camera.DEPTH, "/loomo")
             mVisionInterface.startCameraStream(Camera.FISH_EYE, "/loomo")
         }
@@ -94,10 +111,17 @@ class MainActivity : ComponentActivity() {
         for (cd in list.codecInfos) {
             Log.i(TAG, "Found Codec: ${cd.name}")
         }
+
+        mWatchdog = Watchdog(this, mNode, mHeadInterface)
+
+        // Should not block since we are using multithreading
+        // should also run as fast as possible, always executing new work as it arrives
+        rosExecutor!!.spin()
     }
 
     override fun onResume() {
         super.onResume()
+        /*
         timer = Timer()
         timer!!.schedule(object : TimerTask() {
             override fun run() {
@@ -105,6 +129,7 @@ class MainActivity : ComponentActivity() {
                 handler!!.post(runnable)
             }
         }, this.getDelay(), this.getPeriod())
+         */
     }
 
     override fun onPause() {
@@ -132,7 +157,6 @@ class MainActivity : ComponentActivity() {
     }
 
     protected fun createExecutor(): Executor {
-        //return SingleThreadedExecutor()
         return MultiThreadedExecutor()
     }
 

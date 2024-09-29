@@ -11,11 +11,15 @@ import com.segway.robot.sdk.vision.stream.StreamInfo
 import com.segway.robot.sdk.vision.stream.StreamType
 import kotlinx.coroutines.delay
 import org.ros2.rcljava.publisher.Publisher
+import org.ros2.rcljava.qos.QoSProfile
+import sensor_msgs.msg.CompressedImage
 import sensor_msgs.msg.Image
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.channels.WritableByteChannel
 import java.util.EnumMap
+import java.util.concurrent.TimeUnit
 
 
 val CAMERA_INFO_TOPIC = "camera_info"
@@ -38,7 +42,7 @@ val FISHEYE_TOPIC = "fisheye"
 val IMAGE_TOPIC_SUFFIX_COLOR = "_color"
 val IMAGE_ENCODING_COLOR = "rgba8"
 
-val IMAGE_TOPIC_SUFFIX_MONO = ""
+val IMAGE_TOPIC_SUFFIX_MONO = "_raw"
 val IMAGE_ENCODING_MONO = "mono8"
 
 val IMAGE_TOPIC_SUFFIX_DEPTH = "_depth"
@@ -54,6 +58,7 @@ enum class Camera {
         override fun initCache(vision: Vision) {
             mColorDepthCalibration = vision.colorDepthCalibrationData
             mStreamInfo = vision.getStreamInfo(StreamType.COLOR)
+            // Loomo delivers frames via callback as ARGB_8888
             mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.ARGB_8888)
             mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
         }
@@ -63,7 +68,7 @@ enum class Camera {
         override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_COLOR }
         override fun nativeEncoding(): String { return IMAGE_ENCODING_COLOR }
 
-        override fun fillRosMessage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: Image, timeSync: TimeSync): Boolean {
             // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
             // extract the data. This is expensive... but what can you do.
             // TODO: figure out how to avoid this double-copy
@@ -73,19 +78,26 @@ enum class Camera {
             mByteBuffer!!.position(0)
 
             // Copy from Bitmap -> Buffer
+            // We ideally want to only copy the RGB elements and skip the Alpha channel...
             mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
 
             // Assign to ROS msg
-            msg.data = mByteBuffer!!.array().asList()
+            msg.data = mByteBuffer!!.array()
 
             msg.header.frameId = TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID
             msg.encoding = this.nativeEncoding()
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
+            // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
         }
 
-        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo, timeSync: TimeSync): Boolean {
             msg.header.frameId = TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
@@ -98,13 +110,13 @@ enum class Camera {
             //     [ 0  0  1]
             // Stored as a flat array of 9 float64 (doubles)
             // Row-major order
-            val k = Array<Double>(9) { 0.0 }
+            val k =    DoubleArray(9) { 0.0 }
             k[0] = intrinsic.focalLength.x.toDouble()
             k[4] = intrinsic.focalLength.y.toDouble()
             k[2] = intrinsic.principal.x.toDouble()
             k[5] = intrinsic.principal.y.toDouble()
             k[8] = 1.0
-            msg.k = k.asList()
+            msg.k = k
 
             // For depth processing, the P matrix is the most important to publish
             // Projection/camera matrix
@@ -114,7 +126,7 @@ enum class Camera {
             //
             // For monocular cameras, Tx = Ty = 0
             //
-            var p = Array<Double>(12) { 0.0 }
+            var p = DoubleArray(12) { 0.0 }
             // fx'
             p[0] = intrinsic.focalLength.x.toDouble()
             // cx'
@@ -128,16 +140,44 @@ enum class Camera {
             // Ty
             p[7] = 0.0
             p[10] = 1.0
-            msg.p = p.asList()
+            msg.p = p
 
-            val d = Array<Double>(5) { 0.0 }
+            val d = DoubleArray(5) { 0.0 }
 
             // Depth camera has valid distortion coefficients
             for (i in 0..4) {
                 d[i] = intrinsic.distortion.value[i].toDouble()
             }
 
-            msg.d = d.asList()
+            msg.d = d
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
+        }
+
+        override fun fillRosMessage(frame: Frame, msg: CompressedImage, timeSync: TimeSync): Boolean {
+            // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
+            // extract the data. This is expensive... but what can you do.
+            // TODO: figure out how to avoid this double-copy
+            mBitmap!!.copyPixelsFromBuffer(frame.byteBuffer)
+
+            val compressedOutStream: ByteArrayOutputStream = ByteArrayOutputStream();
+            mBitmap!!.compress(Bitmap.CompressFormat.JPEG, 80, compressedOutStream)
+
+            // Assign to ROS msg
+            msg.data = compressedOutStream.toByteArray()
+
+            msg.header.frameId = TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID
+            msg.format = "jpeg"
+
+            // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
         }
     },
     DEPTH {
@@ -158,7 +198,7 @@ enum class Camera {
         override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_DEPTH }
         override fun nativeEncoding(): String { return IMAGE_ENCODING_DEPTH }
 
-        override fun fillRosMessage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: Image, timeSync: TimeSync): Boolean {
             // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
             // extract the data. This is expensive... but what can you do.
             // TODO: figure out how to avoid this double-copy
@@ -171,16 +211,22 @@ enum class Camera {
             mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
 
             // Assign to ROS msg
-            msg.data = mByteBuffer!!.array().asList()
+            msg.data = mByteBuffer!!.array()
 
             msg.header.frameId = TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID
             msg.encoding = this.nativeEncoding()
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
+            // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
         }
 
-        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo, timeSync: TimeSync): Boolean {
             msg.header.frameId = TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
@@ -193,13 +239,13 @@ enum class Camera {
             //     [ 0  0  1]
             // Stored as a flat array of 9 float64 (doubles)
             // Row-major order
-            val k = Array<Double>(9) { 0.0 }
+            val k = DoubleArray(9) { 0.0 }
             k[0] = intrinsic.focalLength.x.toDouble()
             k[4] = intrinsic.focalLength.y.toDouble()
             k[2] = intrinsic.principal.x.toDouble()
             k[5] = intrinsic.principal.y.toDouble()
             k[8] = 1.0
-            msg.k = k.asList()
+            msg.k = k
 
             // For depth processing, the P matrix is the most important to publish
             // Projection/camera matrix
@@ -209,7 +255,7 @@ enum class Camera {
             //
             // For monocular cameras, Tx = Ty = 0
             //
-            var p = Array<Double>(12) { 0.0 }
+            var p = DoubleArray(12) { 0.0 }
             // fx'
             p[0] = intrinsic.focalLength.x.toDouble()
             // cx'
@@ -223,16 +269,25 @@ enum class Camera {
             // Ty
             p[7] = 0.0
             p[10] = 1.0
-            msg.p = p.asList()
+            msg.p = p
 
-            val d = Array<Double>(5) { 0.0 }
+            val d = DoubleArray(5) { 0.0 }
 
             // Depth camera has valid distortion coefficients
             for (i in 0..4) {
                 d[i] = intrinsic.distortion.value[i].toDouble()
             }
 
-            msg.d = d.asList()
+            msg.d = d
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
+        }
+
+        override fun fillRosMessage(frame: Frame, msg: CompressedImage, timeSync: TimeSync): Boolean {
+            return false
         }
     },
     FISH_EYE {
@@ -248,7 +303,7 @@ enum class Camera {
             mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
         }
 
-        override fun fillRosMessage(frame: Frame, msg: Image) {
+        override fun fillRosMessage(frame: Frame, msg: Image, timeSync: TimeSync): Boolean {
             // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
             // extract the data. This is expensive... but what can you do.
             // TODO: figure out how to avoid this double-copy
@@ -261,16 +316,22 @@ enum class Camera {
             mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
 
             // Assign to ROS msg
-            msg.data = mByteBuffer!!.array().asList()
+            msg.data = mByteBuffer!!.array()
 
             msg.header.frameId = TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID
             msg.encoding = this.nativeEncoding()
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
+
+            // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return true
         }
 
-        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo) {
+        override fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo, timeSync: TimeSync): Boolean {
             msg.header.frameId = TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
@@ -281,22 +342,31 @@ enum class Camera {
             //     [ 0  0  1]
             // Stored as a flat array of 9 float64 (doubles)
             // Row-major order
-            var k = Array<Double>(9) { 0.0 }
+            var k = DoubleArray(9) { 0.0 }
             for (row: Int in 0..2) {
                 for (col: Int in 0..2) {
                     k[(row * 3) + col] = mMotionModuleCalibration!!.fishEyeIntrinsics.kf.matrix[row][col].toDouble()
                 }
             }
 
-            msg.k = k.asList()
+            msg.k = k
 
-            var d = Array<Double>(5) { 0.0 }
+            var d = DoubleArray(5) { 0.0 }
 
             // d[0] = mMotionModuleCalibration!!.fishEyeIntrinsics.distortion.value[0].toDouble()
             // TODO: My Loomo has NaN for the other 4 distortion parameters...
 
-            msg.d = d.asList()
+            msg.d = d
             msg.distortionModel = "plumb_bob"
+
+            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
+            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+
+            return false
+        }
+
+        override fun fillRosMessage(frame: Frame, msg: CompressedImage, timeSync: TimeSync): Boolean {
+            return false
         }
 
         override fun streamType(): Int { return StreamType.FISH_EYE }
@@ -329,14 +399,16 @@ enum class Camera {
 
     abstract fun initCache(vision: Vision)
 
-    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.Image)
+    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.Image, timeSync: TimeSync): Boolean
 
-    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo)
+    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CameraInfo, timeSync: TimeSync): Boolean
+
+    abstract fun fillRosMessage(frame: Frame, msg: sensor_msgs.msg.CompressedImage, timeSync: TimeSync): Boolean
 }
 
-class VisionInterface constructor(ctx: android.content.Context, node: RosNode, tfPublisher: TfPublisher) {
+class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher: TfPublisher, timeSync: TimeSync) {
 
-    private class CameraPublisherContext constructor(vision: Vision, camera: Camera, topic: String, node: RosNode, tfPublisher: TfPublisher) : Vision.FrameListener {
+    private class CameraPublisherContext (vision: Vision, camera: Camera, topic: String, node: RosNode, tfPublisher: TfPublisher, timeSync: TimeSync) : Vision.FrameListener {
         private val mVision: Vision = vision
         private val mCamera: Camera = camera
         private val mNode: RosNode = node
@@ -345,22 +417,31 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode, t
         private val mCompressedFramePublisher: Publisher<sensor_msgs.msg.CompressedImage>
         private val mCameraInfoPublisher: Publisher<sensor_msgs.msg.CameraInfo>
         private val mTfPublisher: TfPublisher = tfPublisher
+        private val mTimeSync: TimeSync = timeSync
         private val TAG: String = "CamPub_" + mCamera.name
+
+        // Perf counters
+        var mPerfImage = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/it")
+        var mPerfImagePublish = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/ip")
+        var mPerfCamInfo = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/ct")
+        var mPerfCamInfoPublish = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/cp")
 
         init {
             val rawFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}"
             mFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.Image::class.java,
-                rawFrameTopic
+                rawFrameTopic,
+                QoSProfile.SENSOR_DATA
             )
             Log.i(TAG, "${mCamera.name}: created topic $rawFrameTopic")
 
-            val compressedFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image_compressed"
-            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic)
-            Log.i(TAG, "${mCamera.name}: created topic $compressedFrameTopic");
+            val compressedFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/compressed"
+            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic/*, QoSProfile.SENSOR_DATA*/)
+            Log.i(TAG, "${mCamera.name}: created topic $compressedFrameTopic")
 
-            val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/$CAMERA_INFO_TOPIC"
+            val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/$CAMERA_INFO_TOPIC"
             mCameraInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
-                cameraInfoTopic
+                cameraInfoTopic,
+                QoSProfile.SENSOR_DATA
             )
             Log.i(TAG, "${mCamera.name}: created topic $cameraInfoTopic");
         }
@@ -373,16 +454,40 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode, t
             // Tell the TF publisher we need a transform at this time
             // TODO: can we submit other cameras?
             if (mCamera == Camera.DEPTH) {
-                mTfPublisher.indicateTfNeededAtTime(frame.info.platformTimeStamp)
+                mTfPublisher.indicateTfNeededAtTime(mTfPublisher.captureTfContext(frame.info.platformTimeStamp))
             }
 
-            val rawMsg: sensor_msgs.msg.Image = sensor_msgs.msg.Image()
-            mCamera.fillRosMessage(frame, rawMsg)
-            mFramePublisher.publish(rawMsg)
+            if (mCamera == Camera.DEPTH || mCamera == Camera.FISH_EYE) {
+                // mPerfImage.start()
+                val rawMsg: sensor_msgs.msg.Image = sensor_msgs.msg.Image()
+                mCamera.fillRosMessage(frame, rawMsg, mTimeSync)
+                // mPerfImage.stop()
 
+                //mPerfImagePublish.start()
+                mFramePublisher.publish(rawMsg)
+                //mPerfImagePublish.stop()
+            } else if (mCamera == Camera.COLOR) {
+                // Color camera publishes compressed frames
+                //mPerfImage.start()
+                val rawMsg: sensor_msgs.msg.CompressedImage = sensor_msgs.msg.CompressedImage()
+                mCamera.fillRosMessage(frame, rawMsg, mTimeSync)
+                //mPerfImage.stop()
+
+                //mPerfImagePublish.start()
+                mCompressedFramePublisher.publish(rawMsg)
+                //mPerfImagePublish.stop()
+            } else {
+                assert(false);
+            }
+
+            //mPerfCamInfo.start()
             val cameraInfoMsg: sensor_msgs.msg.CameraInfo = sensor_msgs.msg.CameraInfo()
-            mCamera.fillRosMessage(frame, cameraInfoMsg)
+            mCamera.fillRosMessage(frame, cameraInfoMsg, mTimeSync)
+            //mPerfCamInfo.stop()
+
+            //mPerfCamInfoPublish.start()
             mCameraInfoPublisher.publish(cameraInfoMsg)
+            //mPerfCamInfoPublish.stop()
         }
 
         fun startPublishing() {
@@ -400,6 +505,7 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode, t
     private var mPublishers: EnumMap<Camera, CameraPublisherContext> =
         EnumMap(Camera::class.java);
     private val mTfPublisher: TfPublisher = tfPublisher
+    private val mTimeSync: TimeSync = timeSync
 
     val TAG: String = "VisionIface"
     private var mNode: RosNode = node
@@ -439,7 +545,7 @@ class VisionInterface constructor(ctx: android.content.Context, node: RosNode, t
             delay(100);
         }
 
-        mPublishers[camera] = CameraPublisherContext(mVision, camera, topic, mNode, mTfPublisher)
+        mPublishers[camera] = CameraPublisherContext(mVision, camera, topic, mNode, mTfPublisher, mTimeSync)
         mPublishers[camera]!!.startPublishing()
     }
 
