@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ros2.rcljava.publisher.Publisher
+import org.ros2.rcljava.qos.QoSProfile
 import tf2_msgs.msg.TFMessage
 import java.lang.Math.toRadians
 import java.util.Arrays
@@ -47,9 +48,9 @@ class SensorInterface (ctx: android.content.Context, node: RosNode) {
         }
         mSensor.bindService(ctx, mBindSensorListener)
 
-        mUltrasonicPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ultrasonic")
-        mIrLeftPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ir_left")
-        mIrRightPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ir_right")
+        mUltrasonicPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ultrasonic", QoSProfile.SENSOR_DATA)
+        mIrLeftPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ir_left", QoSProfile.SENSOR_DATA)
+        mIrRightPublisher = mNode.node.createPublisher(sensor_msgs.msg.Range::class.java, "/loomo/sensor/ir_right", QoSProfile.SENSOR_DATA)
 
         start(10.0f)
     }

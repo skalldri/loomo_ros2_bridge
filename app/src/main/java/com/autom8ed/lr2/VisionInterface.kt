@@ -336,33 +336,47 @@ enum class Camera {
             msg.height = mStreamInfo!!.height
             msg.width = mStreamInfo!!.width
 
+            /*
+
+            **** Calibrating ****
+           mono pinhole calibration...
+            D = [-0.20999224085010745, 0.03005997134956105, 0.00028780071510052047, 6.403100484305247e-05, 0.0]
+            K = [278.0376154285591, 0.0, 315.4365678931718, 0.0, 276.6463084317693, 237.7256909765486, 0.0, 0.0, 1.0]
+            R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+            P = [190.4833526611328, 0.0, 315.73524543965686, 0.0, 0.0, 218.78814697265625, 236.13651827145077, 0.0, 0.0, 0.0, 1.0, 0.0]
+            */
+
             // Intrinsic camera matrix for the raw (distorted) images.
             //     [fx  0 cx]
             // K = [ 0 fy cy]
             //     [ 0  0  1]
             // Stored as a flat array of 9 float64 (doubles)
             // Row-major order
-            var k = DoubleArray(9) { 0.0 }
-            for (row: Int in 0..2) {
+            val k: DoubleArray = doubleArrayOf(278.0376154285591, 0.0, 315.4365678931718, 0.0, 276.6463084317693, 237.7256909765486, 0.0, 0.0, 1.0)
+
+            // Loomo calibration is busted, manually calibrated
+            /*for (row: Int in 0..2) {
                 for (col: Int in 0..2) {
                     k[(row * 3) + col] = mMotionModuleCalibration!!.fishEyeIntrinsics.kf.matrix[row][col].toDouble()
                 }
-            }
+            }*/
 
             msg.k = k
-
-            var d = DoubleArray(5) { 0.0 }
-
+            val d: DoubleArray = doubleArrayOf(-0.20999224085010745, 0.03005997134956105, 0.00028780071510052047, 6.403100484305247e-05, 0.0)
             // d[0] = mMotionModuleCalibration!!.fishEyeIntrinsics.distortion.value[0].toDouble()
             // TODO: My Loomo has NaN for the other 4 distortion parameters...
 
             msg.d = d
+
+            val p: DoubleArray = doubleArrayOf(190.4833526611328, 0.0, 315.73524543965686, 0.0, 0.0, 218.78814697265625, 236.13651827145077, 0.0, 0.0, 0.0, 1.0, 0.0)
+            msg.p = p
+
             msg.distortionModel = "plumb_bob"
 
             msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
             msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
 
-            return false
+            return true
         }
 
         override fun fillRosMessage(frame: Frame, msg: CompressedImage, timeSync: TimeSync): Boolean {
@@ -435,13 +449,13 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
             Log.i(TAG, "${mCamera.name}: created topic $rawFrameTopic")
 
             val compressedFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/compressed"
-            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic/*, QoSProfile.SENSOR_DATA*/)
+            // TODO: fix image_transport to accept any kind of QoSProfile
+            mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic, QoSProfile.SENSOR_DATA)
             Log.i(TAG, "${mCamera.name}: created topic $compressedFrameTopic")
 
             val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/$CAMERA_INFO_TOPIC"
             mCameraInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
-                cameraInfoTopic,
-                QoSProfile.SENSOR_DATA
+                cameraInfoTopic
             )
             Log.i(TAG, "${mCamera.name}: created topic $cameraInfoTopic");
         }
@@ -482,11 +496,13 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
 
             //mPerfCamInfo.start()
             val cameraInfoMsg: sensor_msgs.msg.CameraInfo = sensor_msgs.msg.CameraInfo()
-            mCamera.fillRosMessage(frame, cameraInfoMsg, mTimeSync)
+            val publishCameraInfo = mCamera.fillRosMessage(frame, cameraInfoMsg, mTimeSync)
             //mPerfCamInfo.stop()
 
             //mPerfCamInfoPublish.start()
-            mCameraInfoPublisher.publish(cameraInfoMsg)
+            if (publishCameraInfo) {
+                mCameraInfoPublisher.publish(cameraInfoMsg)
+            }
             //mPerfCamInfoPublish.stop()
         }
 

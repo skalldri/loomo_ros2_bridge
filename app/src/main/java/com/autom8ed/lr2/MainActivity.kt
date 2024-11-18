@@ -60,13 +60,18 @@ class MainActivity : ComponentActivity() {
         // android.system.Os.setenv("ROS_DISCOVERY_SERVER", "192.168.1.36:11811", true)
         // Jetson
         // android.system.Os.setenv("ROS_DISCOVERY_SERVER", "10.0.0.1:11811", true)
+        // android.system.Os.setenv("ROS_STATIC_PEERS", "192.168.1.174", true)
+
 
         // Set ROS_DOMAIN_ID so that the robot runs on an isolated DDS network
         // Other nodes will not attempt to talk directly with the robot, instead they must go through
         // the DDS-Router on the Jetson
         android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
 
-        // android.system.Os.setenv("ROS_STATIC_PEERS", "192.168.1.174", true)
+        // TODO: does not work on Android
+        // Set FastDDS into "large data" mode, to help it transmit data faster
+        // android.system.Os.setenv("ROS_STATIC_PEERS", "10.0.0.1", true)
+        android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "DEFAULT", true)
 
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
@@ -102,7 +107,7 @@ class MainActivity : ComponentActivity() {
 
         GlobalScope.launch {
             // Color camera publishes too slow to be of much use...
-            // mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
+            mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
             mVisionInterface.startCameraStream(Camera.DEPTH, "/loomo")
             mVisionInterface.startCameraStream(Camera.FISH_EYE, "/loomo")
         }

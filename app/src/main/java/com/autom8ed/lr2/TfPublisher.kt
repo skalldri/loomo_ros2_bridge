@@ -13,6 +13,7 @@ import geometry_msgs.msg.Transform
 import geometry_msgs.msg.TransformStamped
 import geometry_msgs.msg.Vector3
 import org.ros2.rcljava.publisher.Publisher
+import org.ros2.rcljava.qos.QoSProfile
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit

@@ -47,7 +47,7 @@ class HeadInterface(ctx: android.content.Context, node: RosNode) {
         }
         mHead.bindService(ctx, mBindHeadListener)
 
-        mNode.node.createSubscription(std_msgs.msg.UInt8::class.java, "/loomo/head_light_mode") { msg: std_msgs.msg.UInt8 ->
+        mNode.node.createSubscription(std_msgs.msg.UInt8::class.java, "/loomo/head/light_mode") { msg: std_msgs.msg.UInt8 ->
             if (mHead.isBind) {
                 setLightMode(msg.data.toInt())
             }

@@ -3,19 +3,20 @@ package com.autom8ed.lr2
 import android.util.Log
 import org.ros2.rcljava.node.BaseComposableNode
 import org.ros2.rcljava.publisher.Publisher
+import org.ros2.rcljava.qos.QoSProfile
 import org.ros2.rcljava.timer.WallTimer
 import java.util.concurrent.TimeUnit
 
 
 class RosNode(name: String) : BaseComposableNode(name) {
     private var publisher: Publisher<std_msgs.msg.String>
-    private val fisheyeTopic = "chatter"
+    private val chatterTopic = "chatter"
     private val T = "RosNode"
     private var count = 0
 
     private var timer: WallTimer? = null
     init {
-        publisher = node.createPublisher(std_msgs.msg.String::class.java, fisheyeTopic)
+        publisher = node.createPublisher(std_msgs.msg.String::class.java, chatterTopic, QoSProfile.SENSOR_DATA)
     }
 
     fun start() {

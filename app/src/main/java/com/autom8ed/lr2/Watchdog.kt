@@ -9,7 +9,7 @@ class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadI
 
     val mNode: RosNode = node
     val mWatchdogPublisher: Publisher<std_msgs.msg.Empty> =
-        mNode.node.createPublisher(std_msgs.msg.Empty::class.java, "/loomo/android_watchdog")
+        mNode.node.createPublisher(std_msgs.msg.Empty::class.java, "/loomo/android_watchdog", QoSProfile.SENSOR_DATA)
     val mHeadInterface: HeadInterface = headInterface
     val mWatchdogPublisherThread: Thread
     val mWatchdogSubscriberThread: Thread
