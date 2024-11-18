@@ -150,6 +150,7 @@ enum class Camera {
             }
 
             msg.d = d
+            msg.distortionModel = "plumb_bob"
 
             msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
             msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
@@ -279,6 +280,7 @@ enum class Camera {
             }
 
             msg.d = d
+            msg.distortionModel = "plumb_bob"
 
             msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
             msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
@@ -443,8 +445,7 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
         init {
             val rawFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}"
             mFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.Image::class.java,
-                rawFrameTopic,
-                QoSProfile.SENSOR_DATA
+                rawFrameTopic, QoSProfile.SENSOR_DATA
             )
             Log.i(TAG, "${mCamera.name}: created topic $rawFrameTopic")
 
@@ -455,7 +456,7 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
 
             val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/$CAMERA_INFO_TOPIC"
             mCameraInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
-                cameraInfoTopic
+                cameraInfoTopic, QoSProfile.SENSOR_DATA
             )
             Log.i(TAG, "${mCamera.name}: created topic $cameraInfoTopic");
         }
