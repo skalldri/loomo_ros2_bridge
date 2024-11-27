@@ -23,31 +23,14 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 
-object TfPublisherConstants {
-    val BASE_ODOM = "base_odom"
-    val BASE_LINK = "base_link"
-    val NECK_LINK = "neck_link"
-    val FISHEYE_FRAME_ID = "loomo_fisheye"
-    val FISHEYE_OPTICAL_FRAME_ID = "loomo_fisheye_optical"
-    val REALSENSE_DEPTH_FRAME_ID = "loomo_realsense_depth"
-    val REALSENSE_COLOR_FRAME_ID = "loomo_realsense_color"
-    val REALSENSE_DEPTH_OPTICAL_FRAME_ID = "loomo_realsense_depth_optical"
-    val REALSENSE_COLOR_OPTICAL_FRAME_ID = "loomo_realsense_color_optical"
-    val ULTRASONIC_FRAME_ID = "loomo_ultrasonic"
-    val IR_LEFT_FRAME_ID = "loomo_ir_left"
-    val IR_RIGHT_FRAME_ID = "loomo_ir_right"
-    val LOOMO_ODOM = "loomo_odom"
-
-    val ULTRASONIC_HEIGHT_M = 0.44
-    val ULTRASONIC_FORWARD_M = 0.1
-
-    val IR_CENTER_OFFSET_M = 0.025
-    val IR_HEIGHT_OFFSET_FROM_USS_M = -0.035
-}
-
 class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface) {
 
-    class TfNeededContext(timestamp: Long, baseImu: SensorData, headImu: SensorData, pose2D: SensorData) {
+    class TfNeededContext(
+        timestamp: Long,
+        baseImu: SensorData,
+        headImu: SensorData,
+        pose2D: SensorData
+    ) {
         val mTimestamp: Long = timestamp
         val mBaseImu: SensorData = baseImu
         val mHeadImu: SensorData = headImu
@@ -62,7 +45,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     private val mNode: RosNode = node
     private var mThread: Thread? = null
     private val mThreadRun: AtomicBoolean = AtomicBoolean(true)
-    private val mTimestampQueue: BlockingQueue<TfNeededContext> = LinkedBlockingDeque<TfNeededContext>()
+    private val mTimestampQueue: BlockingQueue<TfNeededContext> =
+        LinkedBlockingDeque<TfNeededContext>()
 
     private val TAG: String = "TfPublisher"
 
@@ -78,14 +62,17 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         }
         mSensor.bindService(ctx, mBindSensorListener)
         mTfPublisher = mNode.node.createPublisher(tf2_msgs.msg.TFMessage::class.java, "/tf")
-        mOdometryPublisher = mNode.node.createPublisher(nav_msgs.msg.Odometry::class.java, "/loomo/odom")
-        mJointStatePublisher = mNode.node.createPublisher(sensor_msgs.msg.JointState::class.java, "/loomo/joint_states")
+        mOdometryPublisher =
+            mNode.node.createPublisher(nav_msgs.msg.Odometry::class.java, "/loomo/odom")
+        mJointStatePublisher = mNode.node.createPublisher(
+            sensor_msgs.msg.JointState::class.java,
+            "/loomo/joint_states"
+        )
 
         start()
     }
 
-    fun indicateTfNeededAtTime(ctx: TfNeededContext)
-    {
+    fun indicateTfNeededAtTime(ctx: TfNeededContext) {
         mTimestampQueue.add(ctx)
     }
 
@@ -146,13 +133,18 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(loomoFrameToRosFrame(tfData.srcFrameID))
 
         // These values are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(tfData.timeStamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(tfData.timeStamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (tfData.timeStamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
     }
 
-    private fun getLoomoToOpticalFrameTf(tgtFrame: String, srcFrame: String, timestamp: Long): TransformStamped {
+    private fun getLoomoToOpticalFrameTf(
+        tgtFrame: String,
+        srcFrame: String,
+        timestamp: Long
+    ): TransformStamped {
         val vector3 = Vector3()
 
         // Assume same physical position
@@ -179,7 +171,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(srcFrame) // TfPublisherConstants.REALSENSE_DEPTH_FRAME_ID)
 
         // These values are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
@@ -211,7 +204,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
         // These values are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
@@ -242,7 +236,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
         // These values are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
@@ -273,13 +268,18 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
         // These values are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
     }
 
-    private fun toQuaternion(roll: Double, pitch: Double, yaw: Double): Quaternion // roll (x), pitch (y), yaw (z), angles are in radians
+    private fun toQuaternion(
+        roll: Double,
+        pitch: Double,
+        yaw: Double
+    ): Quaternion // roll (x), pitch (y), yaw (z), angles are in radians
     {
         // Abbreviations for the various angular functions
         val q = Quaternion()
@@ -298,6 +298,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
 
         return q;
     }
+
     private fun getBaseOdomTransform(baseImuData: SensorData): TransformStamped {
         //Log.i(TAG, "Base IMU Sensor: ${mBaseImuData.floatData[0]}, ${mBaseImuData.floatData[1]}, ${mBaseImuData.floatData[2]}")
 
@@ -329,7 +330,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         vector3.setZ(0.0)
 
         // Use an SDK quaternion to construct a ROS quaternion
-        var q: com.segway.robot.algo.tf.Quaternion = com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
+        var q: com.segway.robot.algo.tf.Quaternion =
+            com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
         q.setEulerRad(0.0F, baseImuData.floatData[0], baseImuData.floatData[1])
 
         val quaternion = Quaternion()
@@ -348,8 +350,10 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_ODOM)
 
         // These timestamps are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(baseImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (baseImuData.timestamp % (1000 * 1000)).toInt() * (1000);
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(baseImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.nanosec =
+            (baseImuData.timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
     }
@@ -385,7 +389,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         vector3.setZ(0.0)
 
         // Use an SDK quaternion to construct a ROS quaternion
-        var q: com.segway.robot.algo.tf.Quaternion = com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
+        var q: com.segway.robot.algo.tf.Quaternion =
+            com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
         q.setEulerRad(pose2D.theta, 0F, 0F)
 
         val quaternion = Quaternion()
@@ -404,7 +409,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.header.setFrameId(TfPublisherConstants.LOOMO_ODOM)
 
         // These timestamps are in microseconds
-        transformStamped.header.stamp.sec = TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
+        transformStamped.header.stamp.sec =
+            TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
         transformStamped.header.stamp.nanosec = (pose2D.timestamp % (1000 * 1000)).toInt() * (1000);
 
         return transformStamped
@@ -412,7 +418,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
 
     // Capture context for an event that occurred at time T
     fun captureTfContext(timestamp: Long): TfNeededContext {
-        val sensorData = mSensor.querySensorData(listOf(Sensor.POSE_2D, Sensor.BASE_IMU, Sensor.HEAD_WORLD_IMU))
+        val sensorData =
+            mSensor.querySensorData(listOf(Sensor.POSE_2D, Sensor.BASE_IMU, Sensor.HEAD_WORLD_IMU))
         val pose2DData = sensorData[0]
         val baseImuData = sensorData[1]
         val headImuData = sensorData[2]
@@ -433,12 +440,18 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         // Construct a list of transforms that can be queried directly from Loomo's SDK
 
         // TODO: calculate initial arraylist capacity based on expected robot transforms
-        val transforms: MutableList<geometry_msgs.msg.TransformStamped> = MutableList(0) { geometry_msgs.msg.TransformStamped() }
+        val transforms: MutableList<geometry_msgs.msg.TransformStamped> =
+            MutableList(0) { geometry_msgs.msg.TransformStamped() }
 
         // base_link -> neck_link
         // neck_link is in the center of the neck, without any rotation component
         val T_BaseLink_NeckLink =
-            AlgoTfRequest(Sensor.HEAD_POSE_Y_FRAME, Sensor.BASE_POSE_FRAME, ctx.mTimestamp, 100 /* lookup threshold */)
+            AlgoTfRequest(
+                Sensor.HEAD_POSE_Y_FRAME,
+                Sensor.BASE_POSE_FRAME,
+                ctx.mTimestamp,
+                100 /* lookup threshold */
+            )
 
         // neck_link -> neck_yaw_link
         // neck_yaw_link has the same location as neck_link, but it incorporates the rotation of the neck
@@ -448,19 +461,39 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         // neck_yaw_link -> realsense_depth
         // The realsense camera is mounted on the yaw-only portion of the head
         val T_NeckYawLink_RealsenseDepth =
-            AlgoTfRequest(Sensor.RS_DEPTH_FRAME, Sensor.HEAD_POSE_Y_FRAME, ctx.mTimestamp, 100 /* lookup threshold */)
+            AlgoTfRequest(
+                Sensor.RS_DEPTH_FRAME,
+                Sensor.HEAD_POSE_Y_FRAME,
+                ctx.mTimestamp,
+                100 /* lookup threshold */
+            )
 
         // neck_yaw_link -> realsense_color
         // The realsense camera is mounted on the yaw-only portion of the head
         val T_NeckYawLink_RealsenseColor =
-            AlgoTfRequest(Sensor.RS_COLOR_FRAME, Sensor.HEAD_POSE_Y_FRAME, ctx.mTimestamp, 100 /* lookup threshold */)
+            AlgoTfRequest(
+                Sensor.RS_COLOR_FRAME,
+                Sensor.HEAD_POSE_Y_FRAME,
+                ctx.mTimestamp,
+                100 /* lookup threshold */
+            )
 
         // neck_yaw_link -> realsense_depth
         // The realsense camera is mounted on the yaw-only portion of the head
         val T_NeckYawLink_Fisheye =
-            AlgoTfRequest(Sensor.RS_FE_FRAME, Sensor.HEAD_POSE_Y_FRAME, ctx.mTimestamp, 100 /* lookup threshold */)
+            AlgoTfRequest(
+                Sensor.RS_FE_FRAME,
+                Sensor.HEAD_POSE_Y_FRAME,
+                ctx.mTimestamp,
+                100 /* lookup threshold */
+            )
 
-        val requests: List<AlgoTfRequest> = listOf(T_BaseLink_NeckLink, T_NeckYawLink_RealsenseDepth, T_NeckYawLink_RealsenseColor, T_NeckYawLink_Fisheye)
+        val requests: List<AlgoTfRequest> = listOf(
+            T_BaseLink_NeckLink,
+            T_NeckYawLink_RealsenseDepth,
+            T_NeckYawLink_RealsenseColor,
+            T_NeckYawLink_Fisheye
+        )
         val results = mSensor.getMassiveTfData(requests)
 
         for (r in results) {
@@ -475,9 +508,27 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
 
         if (transforms.size != 0) {
             // Add static / fixup transforms
-            transforms.add(getLoomoToOpticalFrameTf(TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID, TfPublisherConstants.REALSENSE_DEPTH_FRAME_ID, T_NeckYawLink_RealsenseDepth.timeStamp))
-            transforms.add(getLoomoToOpticalFrameTf(TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID, TfPublisherConstants.REALSENSE_COLOR_FRAME_ID, T_NeckYawLink_RealsenseColor.timeStamp))
-            transforms.add(getLoomoToOpticalFrameTf(TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID, TfPublisherConstants.FISHEYE_FRAME_ID, T_NeckYawLink_Fisheye.timeStamp))
+            transforms.add(
+                getLoomoToOpticalFrameTf(
+                    TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID,
+                    TfPublisherConstants.REALSENSE_DEPTH_FRAME_ID,
+                    T_NeckYawLink_RealsenseDepth.timeStamp
+                )
+            )
+            transforms.add(
+                getLoomoToOpticalFrameTf(
+                    TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID,
+                    TfPublisherConstants.REALSENSE_COLOR_FRAME_ID,
+                    T_NeckYawLink_RealsenseColor.timeStamp
+                )
+            )
+            transforms.add(
+                getLoomoToOpticalFrameTf(
+                    TfPublisherConstants.FISHEYE_OPTICAL_FRAME_ID,
+                    TfPublisherConstants.FISHEYE_FRAME_ID,
+                    T_NeckYawLink_Fisheye.timeStamp
+                )
+            )
             transforms.add(getUltrasonicTransform(ctx.mBaseImu.timestamp))
             transforms.add(getIrLeftTransform(ctx.mBaseImu.timestamp))
             transforms.add(getIrRightTransform(ctx.mBaseImu.timestamp))
@@ -511,7 +562,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         odomMsg.pose.pose.position.x = pose2D.x.toDouble()
         odomMsg.pose.pose.position.y = pose2D.y.toDouble()
 
-        val q: com.segway.robot.algo.tf.Quaternion = com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
+        val q: com.segway.robot.algo.tf.Quaternion =
+            com.segway.robot.algo.tf.Quaternion(0F, 0F, 0F, 0F)
         q.setEulerRad(pose2D.theta, 0.0F, 0.0F)
 
         odomMsg.pose.pose.orientation.x = q.x.toDouble()
@@ -527,7 +579,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         // Intentionally not setting the mOdomMsg.twist.covariance matrix
 
         // These timestamps are in microseconds
-        odomMsg.header.stamp.sec = TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
+        odomMsg.header.stamp.sec =
+            TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
         odomMsg.header.stamp.nanosec = (pose2D.timestamp % (1000 * 1000)).toInt() * (1000);
 
         mOdometryPublisher.publish(odomMsg)
@@ -541,8 +594,10 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         // I don't think this comes from real IMU data, I think it's just the
         // joint state being published as a "fake" IMU
         // TODO: validate this assumption
-        positions[0] = T_BaseLink_NeckLink.q.rollRad.toDouble() // Head "Yaw". Segway calls rotation around the Z-axis "Roll"
-        positions[1] = (-1.0) * headImuData.floatData[0].toDouble() // Head Pitch. Segway roll info is backwards compared to what ROS expects
+        positions[0] =
+            T_BaseLink_NeckLink.q.rollRad.toDouble() // Head "Yaw". Segway calls rotation around the Z-axis "Roll"
+        positions[1] =
+            (-1.0) * headImuData.floatData[0].toDouble() // Head Pitch. Segway roll info is backwards compared to what ROS expects
 
         jointStateMsg.name = listOf("neck_yaw_joint", "head_pitch_joint")
         jointStateMsg.position = positions
@@ -552,8 +607,10 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         jointStateMsg.effort = DoubleArray(2) { 0.0 }
 
         // These timestamps are in microseconds
-        jointStateMsg.header.stamp.sec = TimeUnit.SECONDS.convert(headImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
-        jointStateMsg.header.stamp.nanosec = (headImuData.timestamp % (1000 * 1000)).toInt() * (1000);
+        jointStateMsg.header.stamp.sec =
+            TimeUnit.SECONDS.convert(headImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
+        jointStateMsg.header.stamp.nanosec =
+            (headImuData.timestamp % (1000 * 1000)).toInt() * (1000);
 
         mJointStatePublisher.publish(jointStateMsg)
     }

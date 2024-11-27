@@ -1,6 +1,9 @@
 package com.autom8ed.lr2
 
 import android.graphics.Bitmap
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
 import android.util.Log
 import com.segway.robot.sdk.base.bind.ServiceBinder
 import com.segway.robot.sdk.vision.Vision
@@ -53,7 +56,9 @@ enum class Camera {
         private var mColorDepthCalibration: ColorDepthCalibration? = null
         private var mStreamInfo: StreamInfo? = null
         private var mBitmap: Bitmap? = null
+        private var mBitmapYuv420: Bitmap? = null
         private var mByteBuffer: ByteBuffer? = null
+        private var mMediaCodec: MediaCodec? = null
 
         override fun initCache(vision: Vision) {
             mColorDepthCalibration = vision.colorDepthCalibrationData
@@ -61,12 +66,37 @@ enum class Camera {
             // Loomo delivers frames via callback as ARGB_8888
             mBitmap = Bitmap.createBitmap(mStreamInfo!!.width, mStreamInfo!!.height, Bitmap.Config.ARGB_8888)
             mByteBuffer = ByteBuffer.allocate(mBitmap!!.byteCount)
+
+            // Cleanup this hack later
+            mMediaCodec = MediaCodec.createByCodecName("OMX.Intel.hw_ve.h264")
+            for (t in mMediaCodec!!.codecInfo.supportedTypes) {
+                Log.i("COLOR", "Supported type: $t")
+            }
+            // 2135033992 == 7F420888 == COLOR_FormatYUV420Flexible
+            // 21                     == COLOR_FormatYUV420SemiPlanar
+            // 2130708361 == 7F000789 == COLOR_FormatSurface
+
+            val caps = mMediaCodec!!.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            Log.i("COLOR", "Capabilities: " + caps.encoderCapabilities.toString())
+            val mediaFormat: MediaFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, mStreamInfo!!.width, mStreamInfo!!.height)
+            mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 125000);
+            mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+            mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+            mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 5);
+            mMediaCodec!!.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            val outFmt = mMediaCodec!!.outputFormat
+            val inFmt = mMediaCodec!!.inputFormat
+            Log.i("COLOR", "Configured media codec!")
         }
 
         override fun streamType(): Int { return StreamType.COLOR }
         override fun cameraFrameTopicNamespace(): String { return "$REALSENSE_TOPIC/$REALSENSE_COLOR_NAMESPACE" }
         override fun cameraFrameTopicSuffix(): String { return IMAGE_TOPIC_SUFFIX_COLOR }
         override fun nativeEncoding(): String { return IMAGE_ENCODING_COLOR }
+
+        private fun rgbaToYuv420(width: Int, height: Int, src: ByteBuffer, dst: ByteBuffer) {
+            
+        }
 
         override fun fillRosMessage(frame: Frame, msg: Image, timeSync: TimeSync): Boolean {
             // Loomo SDK can only copy images into an android.Bitmap. Do that first, then
@@ -80,6 +110,15 @@ enum class Camera {
             // Copy from Bitmap -> Buffer
             // We ideally want to only copy the RGB elements and skip the Alpha channel...
             mBitmap!!.copyPixelsToBuffer(mByteBuffer!!)
+
+            // Get an input buffer
+            val bufferIdx: Int = mMediaCodec!!.dequeueInputBuffer(5000)
+            if (bufferIdx < 0) {
+                throw RuntimeException("Failed to get input buffer for H264 encoder")
+            }
+
+            val inputBuffer: ByteBuffer = mMediaCodec!!.getInputBuffer(bufferIdx)!!
+            rgbaToYuv420(mStreamInfo!!.width, mStreamInfo!!.height, mByteBuffer!!, inputBuffer)
 
             // Assign to ROS msg
             msg.data = mByteBuffer!!.array()
@@ -430,13 +469,14 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
         private val mNode: RosNode = node
         private val mTopic: String = topic
         private val mFramePublisher: Publisher<sensor_msgs.msg.Image>
-        private val mCompressedFramePublisher: Publisher<sensor_msgs.msg.CompressedImage>
+        // private val mCompressedFramePublisher: Publisher<sensor_msgs.msg.CompressedImage>
         private val mCameraInfoPublisher: Publisher<sensor_msgs.msg.CameraInfo>
         private val mTfPublisher: TfPublisher = tfPublisher
         private val mTimeSync: TimeSync = timeSync
         private val TAG: String = "CamPub_" + mCamera.name
 
         // Perf counters
+        var mPerfImageE2e = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/e2e")
         var mPerfImage = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/it")
         var mPerfImagePublish = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/ip")
         var mPerfCamInfo = PerfCounter("${mCamera.cameraFrameTopicNamespace()}/ct")
@@ -449,10 +489,11 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
             )
             Log.i(TAG, "${mCamera.name}: created topic $rawFrameTopic")
 
+            /*
             val compressedFrameTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/compressed"
-            // TODO: fix image_transport to accept any kind of QoSProfile
             mCompressedFramePublisher = mNode.node.createPublisher(sensor_msgs.msg.CompressedImage::class.java, compressedFrameTopic, QoSProfile.SENSOR_DATA)
             Log.i(TAG, "${mCamera.name}: created topic $compressedFrameTopic")
+            */
 
             val cameraInfoTopic = "$mTopic/${mCamera.cameraFrameTopicNamespace()}/image${mCamera.cameraFrameTopicSuffix()}/$CAMERA_INFO_TOPIC"
             mCameraInfoPublisher = mNode.node.createPublisher(sensor_msgs.msg.CameraInfo::class.java,
@@ -466,45 +507,49 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
                 return
             }
 
+            mPerfImageE2e.start()
+
             // Tell the TF publisher we need a transform at this time
             // TODO: can we submit other cameras?
             if (mCamera == Camera.DEPTH) {
                 mTfPublisher.indicateTfNeededAtTime(mTfPublisher.captureTfContext(frame.info.platformTimeStamp))
             }
 
-            if (mCamera == Camera.DEPTH || mCamera == Camera.FISH_EYE) {
-                // mPerfImage.start()
+            if (mCamera == Camera.DEPTH || mCamera == Camera.FISH_EYE || mCamera == Camera.COLOR) {
+                mPerfImage.start()
                 val rawMsg: sensor_msgs.msg.Image = sensor_msgs.msg.Image()
                 mCamera.fillRosMessage(frame, rawMsg, mTimeSync)
-                // mPerfImage.stop()
+                mPerfImage.stop()
 
-                //mPerfImagePublish.start()
+                mPerfImagePublish.start()
                 mFramePublisher.publish(rawMsg)
-                //mPerfImagePublish.stop()
-            } else if (mCamera == Camera.COLOR) {
+                mPerfImagePublish.stop()
+            } /* else if (mCamera == Camera.COLOR) {
                 // Color camera publishes compressed frames
-                //mPerfImage.start()
+                mPerfImage.start()
                 val rawMsg: sensor_msgs.msg.CompressedImage = sensor_msgs.msg.CompressedImage()
                 mCamera.fillRosMessage(frame, rawMsg, mTimeSync)
-                //mPerfImage.stop()
+                mPerfImage.stop()
 
-                //mPerfImagePublish.start()
+                mPerfImagePublish.start()
                 mCompressedFramePublisher.publish(rawMsg)
-                //mPerfImagePublish.stop()
-            } else {
+                mPerfImagePublish.stop()
+            }*/ else {
                 assert(false);
             }
 
-            //mPerfCamInfo.start()
+            mPerfCamInfo.start()
             val cameraInfoMsg: sensor_msgs.msg.CameraInfo = sensor_msgs.msg.CameraInfo()
             val publishCameraInfo = mCamera.fillRosMessage(frame, cameraInfoMsg, mTimeSync)
-            //mPerfCamInfo.stop()
+            mPerfCamInfo.stop()
 
-            //mPerfCamInfoPublish.start()
+            mPerfCamInfoPublish.start()
             if (publishCameraInfo) {
                 mCameraInfoPublisher.publish(cameraInfoMsg)
             }
-            //mPerfCamInfoPublish.stop()
+            mPerfCamInfoPublish.stop()
+
+            mPerfImageE2e.stop()
         }
 
         fun startPublishing() {

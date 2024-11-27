@@ -1,6 +1,5 @@
 package com.autom8ed.lr2
 
-import android.media.MediaCodecList
 import android.os.Bundle
 import android.os.Handler
 import androidx.activity.ComponentActivity
@@ -22,12 +21,13 @@ import org.ros2.rcljava.RCLJava
 import org.ros2.rcljava.executors.Executor
 import org.ros2.rcljava.executors.MultiThreadedExecutor
 import java.util.Timer
-import android.util.Log
+import com.autom8ed.lr2.vision.CameraInterface
 
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var mVisionInterface: VisionInterface
+    // private lateinit var mVisionInterface: VisionInterface
+    private lateinit var mCameraInterface: CameraInterface
     private lateinit var mLocomotionPlatformInterface: LocomotionPlatformInterface
     private lateinit var mSensorInterface: SensorInterface
     private lateinit var mTfPublisher: TfPublisher
@@ -71,7 +71,10 @@ class MainActivity : ComponentActivity() {
         // TODO: does not work on Android
         // Set FastDDS into "large data" mode, to help it transmit data faster
         // android.system.Os.setenv("ROS_STATIC_PEERS", "10.0.0.1", true)
+
         android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "DEFAULT", true)
+
+        //android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "LARGE_DATA", true)
 
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
@@ -103,19 +106,23 @@ class MainActivity : ComponentActivity() {
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        mVisionInterface = VisionInterface(this, mNode, mTfPublisher, mTimeSync)
+        // Color camera publishes too slow to be of much use...
+        mCameraInterface = CameraInterface(this, mNode, mTfPublisher)
 
         GlobalScope.launch {
-            // Color camera publishes too slow to be of much use...
-            mVisionInterface.startCameraStream(Camera.COLOR, "/loomo")
-            mVisionInterface.startCameraStream(Camera.DEPTH, "/loomo")
-            mVisionInterface.startCameraStream(Camera.FISH_EYE, "/loomo")
+            mCameraInterface.start()
         }
 
-        val list = MediaCodecList(MediaCodecList.ALL_CODECS)
+        //mVisionInterface = VisionInterface(this, mNode, mTfPublisher, mTimeSync)
+
+        /**/
+
+        /*
+        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         for (cd in list.codecInfos) {
             Log.i(TAG, "Found Codec: ${cd.name}")
         }
+        */
 
         mWatchdog = Watchdog(this, mNode, mHeadInterface)
 
