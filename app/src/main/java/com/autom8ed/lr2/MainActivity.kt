@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
         // Set ROS_DOMAIN_ID so that the robot runs on an isolated DDS network
         // Other nodes will not attempt to talk directly with the robot, instead they must go through
         // the DDS-Router on the Jetson
-        android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
+        // android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
 
         // TODO: does not work on Android
         // Set FastDDS into "large data" mode, to help it transmit data faster

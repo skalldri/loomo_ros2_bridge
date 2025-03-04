@@ -95,14 +95,8 @@ class ImageTransport(
         // Always publish the camera info
         mCameraInfoPublisher.publish(frame)
 
-        // NASTY HACK, BUT CANNOT DO ANYTHING ABOUT IT FOR NOW
-        // DDSRouter subscribes to topics immediately, even if there is
-        // no subscriber in the other domain. Need to figure out how to
-        // detect subscribers in the other domain :(
-        if (mCamera.getImageType() != ImageType.COLOR) {
-            // These topics are always published for any image type
-            mBaseImagePublisher.publish(mBitmap, frame.info.platformTimeStamp)
-        }
+        // These topics are always published for any image type
+        mBaseImagePublisher.publish(mBitmap, frame.info.platformTimeStamp)
 
         // Safe access: does not call if NULL
         mCompressedFramePublisher?.publish(mBitmap, frame.info.platformTimeStamp)

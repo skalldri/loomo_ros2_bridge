@@ -10,6 +10,7 @@ activityCompose = "1.9.0"
 composeBom = "2024.05.00"
 slf4jAndroid = "2.0.13-0"
 slf4jVer = "2.0.13"
+cameraXVer = "1.5.0-alpha03"
 
 segwayRobotSpeechSdk = "0.6.335"
 segwayRobotHeadsdk = "0.6.1653"
@@ -39,6 +40,16 @@ androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+
+androidx-camera-camera-core = {group = "androidx.camera", name="camera-core", version.ref = "cameraXVer" }
+androidx-camera-camera-camera2 = {group = "androidx.camera", name="camera-camera2", version.ref = "cameraXVer" }
+androidx-camera-camera-lifecycle = {group = "androidx.camera", name="camera-lifecycle", version.ref = "cameraXVer" }
+androidx-camera-camera-video = {group = "androidx.camera", name="camera-video", version.ref = "cameraXVer" }
+androidx-camera-camera-view = {group = "androidx.camera", name="camera-view", version.ref = "cameraXVer" }
+androidx-camera-camera-mlkit-vision = {group = "androidx.camera", name="camera-mlkit-vision", version.ref = "cameraXVer" }
+androidx-camera-camera-extensions = {group = "androidx.camera", name="camera-extensions", version.ref = "cameraXVer" }
+
+
 segway-robot-speech-sdk = { group = "com.segway.robot", name = "speech-sdk", version.ref = "segwayRobotSpeechSdk" } 
 segway-robot-headsdk = { group = "com.segway.robot", name = "headsdk", version.ref = "segwayRobotHeadsdk" } 
 segway-robot-basesdk = { group = "com.segway.robot", name = "basesdk", version.ref = "segwayRobotBasesdk" }

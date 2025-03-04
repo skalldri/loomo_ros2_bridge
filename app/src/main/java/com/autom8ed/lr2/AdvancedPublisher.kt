@@ -26,7 +26,13 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
         Matched.factory
     ) { status ->
         mSem.acquire()
+        val oldHasSubscribers = mHasSubscribers
         mHasSubscribers = status!!.currentCount > 0
+
+        if (oldHasSubscribers != mHasSubscribers) {
+            onSubscriptionStateChange(mHasSubscribers)
+        }
+
         mSem.release()
     }
 
@@ -41,6 +47,10 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
         val hasSubs = mHasSubscribers
         mSem.release()
         return hasSubs
+    }
+
+    open fun onSubscriptionStateChange(hasSubscribers: Boolean) {
+
     }
 }
 
