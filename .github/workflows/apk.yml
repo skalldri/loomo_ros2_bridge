@@ -1,0 +1,97 @@
+# Build the Loomo ROS2 Bridge APK. The ROS 2 Android bindings (rclandroid AAR) come from the
+# latest skalldri/ros2_java GitHub Release (built by its "Android AAR" workflow); if no release
+# exists yet, the AAR committed in deps/ (Git LFS) is used. A push of a tag v* publishes the APK
+# as a Release asset so the robot's Jetson can fetch and install it without a PC.
+name: APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      aar_release:
+        description: "ros2_java release tag to take the AAR from (empty = latest; 'committed' = use deps/ as checked in)"
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: "Check out (with the LFS deps: Segway SDK mirror and committed AAR)"
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: build-tools;34.0.0 platform-tools platforms;android-34
+
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Fetch the rclandroid AAR from skalldri/ros2_java
+        if: github.event.inputs.aar_release != 'committed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AAR_RELEASE: ${{ github.event.inputs.aar_release }}
+        run: |
+          set -euo pipefail
+          args=(--repo skalldri/ros2_java --pattern 'rclandroid-release.aar' --dir deps/rclandroid --clobber)
+          if [[ -n "$AAR_RELEASE" ]]; then args+=("$AAR_RELEASE"); fi
+          if gh release download "${args[@]}"; then
+            echo "Using rclandroid-release.aar from skalldri/ros2_java release ${AAR_RELEASE:-latest}"
+          else
+            echo "::warning::No ros2_java release with an AAR found; building with the committed deps/rclandroid/rclandroid-release.aar"
+          fi
+          ls -la deps/rclandroid/
+
+      # A debug keystore is generated per machine, so APKs from different runs would refuse to
+      # install over each other (INSTALL_FAILED_UPDATE_INCOMPATIBLE). Restoring one from a secret
+      # keeps every CI build installable over the previous one. Without the secret the build still
+      # works; the Jetson deploy script falls back to uninstall + install.
+      - name: Restore the shared debug keystore (optional secret DEBUG_KEYSTORE_BASE64)
+        if: ${{ env.DEBUG_KEYSTORE_BASE64 != '' }}
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: loomo-ros2-bridge-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Publish release asset (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk "loomo-ros2-bridge-${GITHUB_REF_NAME}-debug.apk"
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Loomo ROS2 Bridge ${GITHUB_REF_NAME}" \
+            --notes "Debug APK built by GitHub Actions run ${GITHUB_RUN_ID}. Install from the Jetson with loomo_jetson_config's deploy-loomo-app.sh." \
+            "loomo-ros2-bridge-${GITHUB_REF_NAME}-debug.apk" || \
+          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber \
+            "loomo-ros2-bridge-${GITHUB_REF_NAME}-debug.apk"
