@@ -65,8 +65,11 @@ class MainActivity : ComponentActivity() {
 
         // Set ROS_DOMAIN_ID so that the robot runs on an isolated DDS network
         // Other nodes will not attempt to talk directly with the robot, instead they must go through
-        // the DDS-Router on the Jetson
-        // android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
+        // the DDS-Router on the Jetson, which bridges domain 1 <-> 0 with a topic allowlist and
+        // republishes the H.264 stream RELIABLE for the Isaac ROS decoder (the decoder cannot be
+        // told to subscribe BEST_EFFORT). Measured 2026-10-05 on the Jetson Orin Nano: the router
+        // costs ~9% of one core carrying ~10 MB/s of raw images plus odom to domain-0 consumers.
+        android.system.Os.setenv("ROS_DOMAIN_ID", "1", true)
 
         // TODO: does not work on Android
         // Set FastDDS into "large data" mode, to help it transmit data faster
