@@ -33,6 +33,11 @@ class H264ImagePublisher(
     private val mByteBuffer: ByteBuffer = ByteBuffer.allocate(mBitmap.byteCount)
     private var mMediaCodec: MediaCodec = MediaCodec.createByCodecName("OMX.Intel.hw_ve.h264")
     private var mMediaCodecReady: Boolean = false
+    // SPS/PPS from MediaCodec's BUFFER_FLAG_CODEC_CONFIG buffer. It is emitted once per encoder
+    // start, so a decoder that subscribes later never sees it unless it is resent: the Isaac ROS
+    // H.264 decoder on the Jetson waits forever for the stream parameters. Prepend it to every
+    // keyframe instead of publishing it on its own.
+    private var mCodecConfig: ByteArray? = null
     private val mMediaCodecSem: Semaphore = Semaphore(1)
     private val kYuv420Size: Int = ((mCamera.getResolution().mWidth * mCamera.getResolution().mHeight) * 3) / 2
     private val mPerfCounter: PerfCounter = PerfCounter("H264Publisher - $mTopic")
@@ -78,15 +83,10 @@ class H264ImagePublisher(
         mMediaCodec.start()
     }
 
-    private fun publishCompressedImage(byteBuffer: ByteBuffer, platformTimeStamp: Long) {
+    private fun publishCompressedImage(data: ByteArray, platformTimeStamp: Long) {
         // Assign to ROS msg
         val msg = sensor_msgs.msg.CompressedImage()
-
-        // ByteBuffers returned from MediaCodec are read-only, so the internal array is not accessible.
-        // Surely one more memcpy() won't kill us at this point....
-        val plainByteArray = ByteArray(byteBuffer.remaining())
-        byteBuffer.get(plainByteArray)
-        msg.data = plainByteArray
+        msg.data = data
 
         msg.header.frameId = mCamera.getTfOpticalFrameId()
         msg.format = "h264"
@@ -142,14 +142,26 @@ class H264ImagePublisher(
 
                 if (outputBufferIndex >= 0) {
                     val outputBuffer: ByteBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex)!!
-                    publishCompressedImage(outputBuffer, platformTimeStamp)
+                    // ByteBuffers returned from MediaCodec are read-only, so the internal array is
+                    // not accessible. Surely one more memcpy() won't kill us at this point....
+                    val frame = ByteArray(outputBuffer.remaining())
+                    outputBuffer.get(frame)
                     mMediaCodec.releaseOutputBuffer(outputBufferIndex, false)
 
-                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == MediaCodec.BUFFER_FLAG_CODEC_CONFIG) {
-                        // We need to continue sending compressed packets until we have drained all the CSV packets.
-                        // Continue after sending this packet
-                        // Log.i(TAG, "Got Codec-Specific Value buffer!")
+                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        // Codec-specific data (SPS/PPS): keep it for the keyframes, then drain the
+                        // remaining output buffers.
+                        Log.i(TAG, "Got codec config (SPS/PPS), ${frame.size} bytes")
+                        mCodecConfig = frame
                         continue
+                    }
+
+                    val config = mCodecConfig
+                    val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) || isIdrFrame(frame)
+                    if (isKeyFrame && config != null) {
+                        publishCompressedImage(config + frame, platformTimeStamp)
+                    } else {
+                        publishCompressedImage(frame, platformTimeStamp)
                     }
 
                     // Log.i(TAG, "Probably final buffer! Send complete")
@@ -234,6 +246,17 @@ class H264ImagePublisher(
         }
     }
 
+    // True if the first NAL unit in an Annex B buffer is an IDR slice (type 5), for encoders that
+    // do not set BUFFER_FLAG_KEY_FRAME.
+    private fun isIdrFrame(data: ByteArray): Boolean {
+        for (i in 0 until data.size - 3) {
+            if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && data[i + 2].toInt() == 1) {
+                return (data[i + 3].toInt() and 0x1f) == 5
+            }
+        }
+        return false
+    }
+
     override fun onSubscriptionStateChange(hasSubscribers: Boolean) {
         mMediaCodecSem.acquire()
 
@@ -246,6 +269,7 @@ class H264ImagePublisher(
             Log.i(TAG, "H.264 detected loss of all subscribers! Stopping MediaCodec...")
             mMediaCodec.stop()
             mMediaCodecReady = false
+            mCodecConfig = null
         }
 
         mMediaCodecSem.release()
