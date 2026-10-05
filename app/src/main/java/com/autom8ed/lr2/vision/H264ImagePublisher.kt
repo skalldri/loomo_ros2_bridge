@@ -254,17 +254,30 @@ class H264ImagePublisher(
                 mMediaCodec.releaseOutputBuffer(outputBufferIndex, false)
 
                 if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    // Codec-specific data (SPS/PPS): keep it for the keyframes; the first real
-                    // frame follows, so keep waiting for it.
+                    // Codec-specific data (SPS/PPS) as its own buffer: keep it for the keyframes;
+                    // the first real frame follows, so keep waiting for it.
                     Log.i(TAG, "Got codec config (SPS/PPS), ${frame.size} bytes")
                     mCodecConfig = frame
                     continue
                 }
 
+                // With Surface input this encoder emits no separate codec-config buffer and
+                // carries SPS/PPS inline in the first IDR frame only, so also harvest them from
+                // the frame itself, and look for an IDR slice anywhere in it, not just first.
+                val nals = scanNalUnits(frame)
+                val inlineConfig = extractParameterSets(frame, nals)
+                if (inlineConfig != null) {
+                    if (mCodecConfig == null) {
+                        Log.i(TAG, "Got inline SPS/PPS, ${inlineConfig.size} bytes")
+                    }
+                    mCodecConfig = inlineConfig
+                }
+
                 val stamp = stampFor(bufferInfo.presentationTimeUs, fallbackStamp)
                 val config = mCodecConfig
-                val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) || isIdrFrame(frame)
-                if (isKeyFrame && config != null) {
+                val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) ||
+                    nals.any { it.second == NAL_IDR }
+                if (isKeyFrame && config != null && inlineConfig == null) {
                     publishCompressedImage(config + frame, stamp)
                 } else {
                     publishCompressedImage(frame, stamp)
@@ -345,15 +358,33 @@ class H264ImagePublisher(
         }
     }
 
-    // True if the first NAL unit in an Annex B buffer is an IDR slice (type 5), for encoders that
-    // do not set BUFFER_FLAG_KEY_FRAME.
-    private fun isIdrFrame(data: ByteArray): Boolean {
-        for (i in 0 until data.size - 3) {
+    // (start offset of the start code, NAL type) for every NAL unit in an Annex B buffer.
+    private fun scanNalUnits(data: ByteArray): List<Pair<Int, Int>> {
+        val nals = ArrayList<Pair<Int, Int>>()
+        var i = 0
+        while (i < data.size - 3) {
             if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && data[i + 2].toInt() == 1) {
-                return (data[i + 3].toInt() and 0x1f) == 5
+                // Prefer the 4-byte start code (00 00 00 01) as the unit boundary when present.
+                val start = if (i > 0 && data[i - 1].toInt() == 0) i - 1 else i
+                nals.add(Pair(start, data[i + 3].toInt() and 0x1f))
+                i += 3
+            } else {
+                i++
             }
         }
-        return false
+        return nals
+    }
+
+    // The SPS and PPS NAL units of a frame, as one Annex B blob, or null if it has none.
+    private fun extractParameterSets(data: ByteArray, nals: List<Pair<Int, Int>>): ByteArray? {
+        var out = ByteArray(0)
+        for ((index, nal) in nals.withIndex()) {
+            if (nal.second == NAL_SPS || nal.second == NAL_PPS) {
+                val end = if (index + 1 < nals.size) nals[index + 1].first else data.size
+                out += data.copyOfRange(nal.first, end)
+            }
+        }
+        return if (out.isEmpty()) null else out
     }
 
     override fun onSubscriptionStateChange(hasSubscribers: Boolean) {
@@ -379,5 +410,8 @@ class H264ImagePublisher(
         private const val kBitRate = 4000000
         private const val kIFrameIntervalSeconds = 1
         private const val kMaxPendingStamps = 16
+        private const val NAL_IDR = 5
+        private const val NAL_SPS = 7
+        private const val NAL_PPS = 8
     }
 }
