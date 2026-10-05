@@ -47,6 +47,9 @@ class H264ImagePublisher(
 
         val caps = mMediaCodec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         Log.i(TAG, "Capabilities: " + caps.encoderCapabilities.toString())
+
+        // All fields used by onSubscriptionStateChange() exist from here on.
+        enableSubscriptionStateCallbacks()
     }
 
     private fun configureAndStartMediaCodec() {
