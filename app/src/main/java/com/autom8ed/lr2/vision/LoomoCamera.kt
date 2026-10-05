@@ -40,6 +40,10 @@ abstract class LoomoCamera(vision: Vision, loomoStreamType: Int, imageType: Imag
         return mResolution
     }
 
+    fun getFps(): Int {
+        return mStreamInfo.fps
+    }
+
     fun getLoomoStreamType(): Int {
         return mLoomoStreamType
     }
