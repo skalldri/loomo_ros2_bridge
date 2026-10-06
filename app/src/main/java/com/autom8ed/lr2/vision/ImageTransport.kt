@@ -2,6 +2,7 @@ package com.autom8ed.lr2.vision
 
 import android.graphics.Bitmap
 import android.util.Log
+import com.autom8ed.lr2.PerfCounter
 import com.autom8ed.lr2.RosNode
 import com.autom8ed.lr2.TimeSync
 import com.segway.robot.sdk.vision.Vision
@@ -76,6 +77,8 @@ class ImageTransport(
     )
 
     private val TAG = "ImageTransport - $mBaseImageTopic"
+    private val mFramePerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - frame")
+    private val mCopyPerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - copyPixels")
 
     init {
         // Compressed publishers
@@ -90,7 +93,10 @@ class ImageTransport(
     }
 
     fun publish(frame: Frame) {
+        mFramePerf.start()
+        mCopyPerf.start()
         mBitmap.copyPixelsFromBuffer(frame.byteBuffer)
+        mCopyPerf.stop()
 
         // Always publish the camera info
         mCameraInfoPublisher.publish(frame)
@@ -103,5 +109,6 @@ class ImageTransport(
 
         // Safe access: does not call if NULL
         mH264FramePublisher?.publish(mBitmap, frame.info.platformTimeStamp)
+        mFramePerf.stop()
     }
 }

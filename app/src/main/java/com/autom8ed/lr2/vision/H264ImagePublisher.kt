@@ -24,6 +24,11 @@ import java.util.concurrent.TimeUnit
  * the Loomo's Atom and capped every topic of the colour ImageTransport at ~3 Hz (the frame
  * listener thread is shared). That path is kept only as a fallback for an encoder that refuses
  * Surface input or lockCanvas(), which the MediaCodec documentation allows for.
+ *
+ * Encoded output is collected and published on a thread of its own. The Vision SDK hands the
+ * next frame to the listener only once the callback returns, and waiting for the encoder's
+ * output in the callback (~15-20 ms) was enough to miss every third frame of the 30 fps stream
+ * (frame timestamps showed 33 ms and 67 ms gaps, nothing else). The callback now only draws.
  */
 class H264ImagePublisher(
     node: RosNode,
@@ -45,7 +50,7 @@ class H264ImagePublisher(
     // start, so a decoder that subscribes later never sees it unless it is resent: the Isaac ROS
     // H.264 decoder on the Jetson waits forever for the stream parameters. Prepend it to every
     // keyframe instead of publishing it on its own.
-    private var mCodecConfig: ByteArray? = null
+    @Volatile private var mCodecConfig: ByteArray? = null
     private val mMediaCodecSem: Semaphore = Semaphore(1)
 
     // Surface input (normal path). mUseSurfaceInput flips to false for good if the encoder
@@ -61,6 +66,13 @@ class H264ImagePublisher(
     // published header carries the camera's timestamp. With Surface input the presentation time
     // is the system clock at unlockCanvasAndPost(), hence nearest-match rather than equality.
     private val mPendingStamps = ArrayDeque<Pair<Long, Long>>()
+
+    // All MediaCodec calls go through this lock: the drain thread owns output buffers, the
+    // camera thread only queues input buffers on the fallback path (Surface drawing needs no
+    // codec call). Not mMediaCodecSem, which stopping the encoder holds while joining the thread.
+    private val mCodecLock = Any()
+    private var mDrainThread: Thread? = null
+    @Volatile private var mDraining: Boolean = false
 
     private val mPerfCounter: PerfCounter = PerfCounter("H264Publisher - $mTopic")
     private val mDrawPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - draw")
@@ -109,17 +121,39 @@ class H264ImagePublisher(
         }
 
         mMediaCodec.start()
-        mPendingStamps.clear()
+        synchronized(mPendingStamps) { mPendingStamps.clear() }
+        mDraining = true
+        mDrainThread = Thread({ drainLoop() }, "h264-drain").apply { start() }
         Log.i(TAG, "Encoder started (${if (mUseSurfaceInput) "Surface" else "buffer"} input, " +
             "${kBitRate / 1000} kbit/s, I-frame every ${kIFrameIntervalSeconds}s)")
     }
 
     private fun stopMediaCodec() {
-        mMediaCodec.stop()
+        mDraining = false
+        mDrainThread?.join(1000)
+        mDrainThread = null
+        synchronized(mCodecLock) {
+            mMediaCodec.stop()
+        }
         mInputSurface?.release()
         mInputSurface = null
         mCodecConfig = null
-        mPendingStamps.clear()
+        synchronized(mPendingStamps) { mPendingStamps.clear() }
+    }
+
+    private fun drainLoop() {
+        while (mDraining) {
+            try {
+                if (!drainOne(10000L)) {
+                    continue
+                }
+            } catch (e: Exception) {
+                if (mDraining) {
+                    Log.e(TAG, "Encoder output drain failed", e)
+                }
+                return
+            }
+        }
     }
 
     private fun publishCompressedImage(data: ByteArray, platformTimeStamp: Long) {
@@ -149,13 +183,10 @@ class H264ImagePublisher(
         try {
             if (mMediaCodecReady) {
                 val surface = mInputSurface
-                val fed = if (mUseSurfaceInput && surface != null) {
+                if (mUseSurfaceInput && surface != null) {
                     feedSurface(surface, bitmap, platformTimeStamp)
                 } else {
                     feedBuffer(bitmap, platformTimeStamp)
-                }
-                if (fed) {
-                    drainOutput(platformTimeStamp)
                 }
             }
         } finally {
@@ -173,6 +204,9 @@ class H264ImagePublisher(
             try {
                 canvas.drawBitmap(bitmap, 0f, 0f, null)
             } finally {
+                // Record the stamp before posting: the drain thread can dequeue the encoded
+                // frame before this call returns, and must find the entry already there.
+                rememberStamp(System.nanoTime() / 1000, platformTimeStamp)
                 surface.unlockCanvasAndPost(canvas)
             }
         } catch (e: Exception) {
@@ -184,114 +218,112 @@ class H264ImagePublisher(
         } finally {
             mDrawPerf.stop()
         }
-        rememberStamp(System.nanoTime() / 1000, platformTimeStamp)
         return true
     }
 
     // Fallback: RGBA -> NV12 on the CPU into an encoder input buffer.
     private fun feedBuffer(bitmap: Bitmap, platformTimeStamp: Long): Boolean {
-        val inputBufferIndex: Int = mMediaCodec.dequeueInputBuffer(0)
-        if (inputBufferIndex < 0) {
-            Log.e(TAG, "No input buffer available for MediaCodec!")
-            return false
-        }
-        val inputBuffer: ByteBuffer = mMediaCodec.getInputBuffer(inputBufferIndex)!!
-
         mByteBuffer.clear()
         bitmap.copyPixelsToBuffer(mByteBuffer)
-        mDrawPerf.start()
-        encodeYUV420SP(inputBuffer, mByteBuffer, mWidth, mHeight)
-        mDrawPerf.stop()
-
-        mMediaCodec.queueInputBuffer(inputBufferIndex, 0, kYuv420Size, platformTimeStamp, 0)
-        rememberStamp(platformTimeStamp, platformTimeStamp)
+        synchronized(mCodecLock) {
+            val inputBufferIndex: Int = mMediaCodec.dequeueInputBuffer(0)
+            if (inputBufferIndex < 0) {
+                Log.e(TAG, "No input buffer available for MediaCodec!")
+                return false
+            }
+            val inputBuffer: ByteBuffer = mMediaCodec.getInputBuffer(inputBufferIndex)!!
+            mDrawPerf.start()
+            encodeYUV420SP(inputBuffer, mByteBuffer, mWidth, mHeight)
+            mDrawPerf.stop()
+            rememberStamp(platformTimeStamp, platformTimeStamp)
+            mMediaCodec.queueInputBuffer(inputBufferIndex, 0, kYuv420Size, platformTimeStamp, 0)
+        }
         return true
     }
 
     private fun rememberStamp(presentationTimeUs: Long, platformTimeStamp: Long) {
-        mPendingStamps.addLast(Pair(presentationTimeUs, platformTimeStamp))
-        while (mPendingStamps.size > kMaxPendingStamps) {
-            mPendingStamps.removeFirst()
+        synchronized(mPendingStamps) {
+            mPendingStamps.addLast(Pair(presentationTimeUs, platformTimeStamp))
+            while (mPendingStamps.size > kMaxPendingStamps) {
+                mPendingStamps.removeFirst()
+            }
         }
     }
 
     // Platform timestamp of the input frame closest to this output's presentation time; entries
-    // up to and including the match are dropped (output is in presentation order).
-    private fun stampFor(presentationTimeUs: Long, fallback: Long): Long {
-        var best: Pair<Long, Long>? = null
-        for (entry in mPendingStamps) {
-            if (best == null || Math.abs(entry.first - presentationTimeUs) < Math.abs(best.first - presentationTimeUs)) {
-                best = entry
+    // up to and including the match are dropped (output is in presentation order). Falls back
+    // to the current platform clock if nothing is pending.
+    private fun stampFor(presentationTimeUs: Long): Long {
+        synchronized(mPendingStamps) {
+            var best: Pair<Long, Long>? = null
+            for (entry in mPendingStamps) {
+                if (best == null || Math.abs(entry.first - presentationTimeUs) < Math.abs(best.first - presentationTimeUs)) {
+                    best = entry
+                }
             }
-        }
-        if (best == null) {
-            return fallback
-        }
-        while (mPendingStamps.isNotEmpty()) {
-            val head = mPendingStamps.removeFirst()
-            if (head === best) {
-                break
+            if (best == null) {
+                return System.nanoTime() / 1000
             }
+            while (mPendingStamps.isNotEmpty()) {
+                val head = mPendingStamps.removeFirst()
+                if (head === best) {
+                    break
+                }
+            }
+            return best.second
         }
-        return best.second
     }
 
-    // Publish every encoded frame that is ready. Waits briefly for the first one (the encoder
-    // usually returns the frame just fed), then takes whatever else is queued without waiting.
-    private fun drainOutput(fallbackStamp: Long) {
-        var timeoutUs = 50000L
-        while (true) {
-            val bufferInfo = MediaCodec.BufferInfo()
+    // Take one encoded buffer from the encoder (waiting up to timeoutUs) and publish it.
+    // Returns false if nothing was ready. Runs on the drain thread.
+    private fun drainOne(timeoutUs: Long): Boolean {
+        val bufferInfo = MediaCodec.BufferInfo()
+        val frame: ByteArray
+        synchronized(mCodecLock) {
             val outputBufferIndex: Int = mMediaCodec.dequeueOutputBuffer(bufferInfo, timeoutUs)
-            if (outputBufferIndex >= 0) {
-                val outputBuffer: ByteBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex)!!
-                // ByteBuffers returned from MediaCodec are read-only, so the internal array is
-                // not accessible. Surely one more memcpy() won't kill us at this point....
-                val frame = ByteArray(bufferInfo.size)
-                outputBuffer.position(bufferInfo.offset)
-                outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                outputBuffer.get(frame)
-                mMediaCodec.releaseOutputBuffer(outputBufferIndex, false)
-
-                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    // Codec-specific data (SPS/PPS) as its own buffer: keep it for the keyframes;
-                    // the first real frame follows, so keep waiting for it.
-                    Log.i(TAG, "Got codec config (SPS/PPS), ${frame.size} bytes")
-                    mCodecConfig = frame
-                    continue
-                }
-
-                // With Surface input this encoder emits no separate codec-config buffer and
-                // carries SPS/PPS inline in the first IDR frame only, so also harvest them from
-                // the frame itself, and look for an IDR slice anywhere in it, not just first.
-                val nals = scanNalUnits(frame)
-                val inlineConfig = extractParameterSets(frame, nals)
-                if (inlineConfig != null) {
-                    if (mCodecConfig == null) {
-                        Log.i(TAG, "Got inline SPS/PPS, ${inlineConfig.size} bytes")
-                    }
-                    mCodecConfig = inlineConfig
-                }
-
-                val stamp = stampFor(bufferInfo.presentationTimeUs, fallbackStamp)
-                val config = mCodecConfig
-                val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) ||
-                    nals.any { it.second == NAL_IDR }
-                if (isKeyFrame && config != null && inlineConfig == null) {
-                    publishCompressedImage(config + frame, stamp)
-                } else {
-                    publishCompressedImage(frame, stamp)
-                }
-                timeoutUs = 0
-            } else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ||
-                outputBufferIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-                continue
-            } else {
-                // INFO_TRY_AGAIN_LATER: nothing (more) ready; the encoder may hold a frame in
-                // flight, it comes out on the next call.
-                break
+            if (outputBufferIndex < 0) {
+                // INFO_TRY_AGAIN_LATER, INFO_OUTPUT_FORMAT_CHANGED, INFO_OUTPUT_BUFFERS_CHANGED
+                return false
             }
+            val outputBuffer: ByteBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex)!!
+            // ByteBuffers returned from MediaCodec are read-only, so the internal array is
+            // not accessible. Surely one more memcpy() won't kill us at this point....
+            frame = ByteArray(bufferInfo.size)
+            outputBuffer.position(bufferInfo.offset)
+            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
+            outputBuffer.get(frame)
+            mMediaCodec.releaseOutputBuffer(outputBufferIndex, false)
         }
+
+        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+            // Codec-specific data (SPS/PPS) as its own buffer: keep it for the keyframes.
+            Log.i(TAG, "Got codec config (SPS/PPS), ${frame.size} bytes")
+            mCodecConfig = frame
+            return true
+        }
+
+        // With Surface input this encoder emits no separate codec-config buffer and carries
+        // SPS/PPS inline in the first IDR frame only, so also harvest them from the frame
+        // itself, and look for an IDR slice anywhere in it, not just first.
+        val nals = scanNalUnits(frame)
+        val inlineConfig = extractParameterSets(frame, nals)
+        if (inlineConfig != null) {
+            if (mCodecConfig == null) {
+                Log.i(TAG, "Got inline SPS/PPS, ${inlineConfig.size} bytes")
+            }
+            mCodecConfig = inlineConfig
+        }
+
+        val stamp = stampFor(bufferInfo.presentationTimeUs)
+        val config = mCodecConfig
+        val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) ||
+            nals.any { it.second == NAL_IDR }
+        if (isKeyFrame && config != null && inlineConfig == null) {
+            publishCompressedImage(config + frame, stamp)
+        } else {
+            publishCompressedImage(frame, stamp)
+        }
+        return true
     }
 
     private fun encodeYUV420SP(yuv420sp: ByteBuffer, rgba888: ByteBuffer, width: Int, height: Int) {
@@ -397,8 +429,8 @@ class H264ImagePublisher(
         }
         else {
             Log.i(TAG, "H.264 detected loss of all subscribers! Stopping MediaCodec...")
-            stopMediaCodec()
             mMediaCodecReady = false
+            stopMediaCodec()
         }
 
         mMediaCodecSem.release()
