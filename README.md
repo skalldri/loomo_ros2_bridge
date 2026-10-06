@@ -35,6 +35,55 @@ Here are some relevant specs:
 - Robotic "head" with integrated Android tablet
 - Speaker
 
+## Camera streams
+
+The app publishes the RealSense depth and colour cameras and the fisheye camera at 30 fps on
+ROS domain 1 (see `MainActivity.kt`; the Jetson's DDS-Router bridges domain 1 to domain 0):
+
+| Stream | Topics (default) | Frame |
+|---|---|---|
+| depth | `/loomo/realsense/depth/image_depth_rect` (`16UC1`), `/loomo/realsense/depth/camera_info` | 320x240, 154 KB |
+| colour | `/loomo/realsense/color/image_color/h264` (`CompressedImage`, H.264), `/loomo/realsense/color/camera_info` | 640x480, 15-85 KB |
+| fisheye | `/loomo/fisheye/image` (`mono8`), `/loomo/fisheye/camera_info` | 640x480, 307 KB |
+
+All image and camera_info topics are RELIABLE with a keep-last history of one second (two for
+H.264), published asynchronously. The Vision SDK callback only copies the frame into a bounded
+per-stream queue; a worker thread publishes. When a worker falls more than `queue.depth` frames
+behind, the incoming frame is dropped, counted and logged at error level with the queue state.
+Nothing is ever skipped silently: every 5 s a `StreamStats` logcat line per stream reports the
+frames the vision service delivered (and the ones it numbered but never delivered), queued,
+dropped, published per topic and failed:
+
+```
+adb logcat -s StreamStats:* BridgeConfig:* MessageWarmup:*
+```
+
+By default `header.stamp.nanosec % 1000` carries the vision service's frame number modulo 1000
+on every image and camera_info message (the platform timestamp is in microseconds, so those
+digits are otherwise zero; the stamp is perturbed by under a microsecond). A receiver can check
+for missing frames without any extra topic. Set `stats.tagFrameNum=false` to turn it off.
+
+### Configuration
+
+Settings are read once at start-up from `bridge.properties` in the app's external files
+directory, then overridden by the extras of the starting intent. The effective values are logged
+under `BridgeConfig`.
+
+```
+adb push bridge.properties /sdcard/Android/data/com.autom8ed.lr2/files/bridge.properties
+adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # one-off override
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `depth.enabled`, `colour.enabled`, `fisheye.enabled` | `true` | run the stream |
+| `depth.raw`, `fisheye.raw` | `true` | publish the raw `sensor_msgs/Image` |
+| `colour.raw` | `false` | raw colour is 1.2 MB per frame (37 MB/s at 30 fps); the USB 2.0 link cannot carry it next to depth and fisheye |
+| `colour.h264` | `true` | the H.264 stream (hardware encoder, 4 Mbit/s, I-frame every second) |
+| `queue.depth` | `8` | frames of jitter a worker may fall behind before frames are dropped |
+| `stats.tagFrameNum` | `true` | frame number in the stamp, see above |
+| `stats.periodS` | `5` | seconds between `StreamStats` lines |
+
 ## Preservation
 The Loomo was discontinued at some point between 2019 and 2024. For now, the SDK documentation is still available [here](https://developer.segwayrobotics.com/developer/documents/segway-robots-sdk.html), and the SDK libraries can still be downloaded from the online Maven repositories.
 

@@ -1,5 +1,8 @@
 package com.autom8ed.lr2.vision
 
+import android.util.Log
+import com.autom8ed.lr2.BridgeConfig
+
 import com.autom8ed.lr2.PerfCounter
 import com.autom8ed.lr2.RosNode
 import org.ros2.rcljava.qos.QoSProfile
@@ -62,7 +65,8 @@ class ImageTransport(
     node: RosNode,
     baseImageTopic: String,
     camera: LoomoCamera,
-    stats: StreamStats
+    stats: StreamStats,
+    private val config: BridgeConfig.Stream
 ) {
     private val mNode: RosNode = node
     val stats: StreamStats = stats
@@ -72,13 +76,13 @@ class ImageTransport(
     private val mCompressedImageTopic: String = getCompressedTopic(mBaseImageTopic)
     private val mH264ImageTopic: String = getH264Topic(mBaseImageTopic)
 
-    // These topics are always available. History depths: one second of frames for the raw
+    // The camera info is always published. History depths: one second of frames for the raw
     // image and its camera info, two seconds for H.264 (frames are 15-85 KB; the Jetson's decoder
     // has shown 250 ms stalls).
-    private val mBaseImagePublisher: BaseImagePublisher =
-        BaseImagePublisher(mNode, mBaseImageTopic, mCamera, reliableKeepLast(RAW_HISTORY))
     private val mCameraInfoPublisher: CameraInfoPublisher =
         CameraInfoPublisher(mNode, mCameraInfoTopic, mCamera, reliableKeepLast(RAW_HISTORY))
+    // The raw image only when configured (BridgeConfig: `<stream>.raw`)
+    private var mBaseImagePublisher: BaseImagePublisher? = null
 
     // These topics are published based on the image type
     private var mCompressedFramePublisher: CompressedImagePublisher? = null
@@ -88,17 +92,23 @@ class ImageTransport(
     private val mFramePerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - frame")
 
     init {
+        if (config.raw) {
+            mBaseImagePublisher = BaseImagePublisher(mNode, mBaseImageTopic, mCamera, reliableKeepLast(RAW_HISTORY))
+        }
+
         // Compressed publishers
         if (mCamera.getImageType().supportsCompressedPublisher()) {
             mCompressedFramePublisher =
                 CompressedImagePublisher(mNode, mCompressedImageTopic, mCamera, reliableKeepLast(RAW_HISTORY))
         }
 
-        if (mCamera.getImageType().supportsH264Publisher()) {
+        if (config.h264 && mCamera.getImageType().supportsH264Publisher()) {
             mH264FramePublisher = H264ImagePublisher(mNode, mH264ImageTopic, mCamera, reliableKeepLast(H264_HISTORY))
         }
+        Log.i(TAG, "publishing camera_info" + (if (mBaseImagePublisher != null) ", raw" else "") +
+            (if (mH264FramePublisher != null) ", h264" else ""))
 
-        mBaseImagePublisher.stats = stats
+        mBaseImagePublisher?.stats = stats
         mCameraInfoPublisher.stats = stats
         mCompressedFramePublisher?.stats = stats
         mH264FramePublisher?.stats = stats
@@ -122,7 +132,7 @@ class ImageTransport(
         mCameraInfoPublisher.publish(platformTimeStamp, frameNum)
 
         // The raw image straight from the slot's array: no Bitmap round trip
-        mBaseImagePublisher.publish(slot, platformTimeStamp, frameNum)
+        mBaseImagePublisher?.publish(slot, platformTimeStamp, frameNum)
 
         // Safe access: does not call if NULL
         mH264FramePublisher?.publish(slot, platformTimeStamp, frameNum)

@@ -22,6 +22,7 @@ import org.ros2.rcljava.executors.Executor
 import org.ros2.rcljava.executors.MultiThreadedExecutor
 import java.util.Timer
 import com.autom8ed.lr2.vision.CameraInterface
+import com.autom8ed.lr2.vision.FrameStamp
 
 
 class MainActivity : ComponentActivity() {
@@ -118,13 +119,18 @@ class MainActivity : ComponentActivity() {
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        // Delivery accounting for the camera streams: one logcat line per stream every 5 s
-        // under the tag "StreamStats", plus an error line for every dropped or failed frame.
-        mStatsReporter = StatsReporter()
+        // Which streams and transports run, from bridge.properties and the intent extras.
+        val config = BridgeConfig.load(this, intent)
+        config.log()
+        FrameStamp.TAG_FRAME_NUM = config.tagFrameNum
+
+        // Delivery accounting for the camera streams: one logcat line per stream every few
+        // seconds under the tag "StreamStats", plus an error line for every dropped or failed frame.
+        mStatsReporter = StatsReporter(config.statsPeriodS * 1000L)
         mStatsReporter.registerExtra { "tf queue depth=${mTfPublisher.queueDepth()} drops=${mTfPublisher.queueDrops()}" }
         mStatsReporter.start()
 
-        mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter)
+        mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
 
         GlobalScope.launch {
             mCameraInterface.start()
