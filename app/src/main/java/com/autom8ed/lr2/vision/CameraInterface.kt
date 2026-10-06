@@ -42,6 +42,8 @@ class CameraInterface(
     private lateinit var mRealsenseDepthPublisher: ImageTransport
     private lateinit var mRealsenseColorPublisher: ImageTransport
     private lateinit var mFisheyePublisher: ImageTransport
+    private val mWorkers = ArrayList<FrameWorker>()
+    private val mCameras = ArrayList<LoomoCamera>()
 
     init {
         // Connect to the service
@@ -81,10 +83,24 @@ class CameraInterface(
             newStats("fisheye")
         )
 
-        // Start all the cameras, associating them with their streams
-        startStream(mRealsenseDepthCamera, mRealsenseDepthPublisher)
-        startStream(mRealsenseColorCamera, mRealsenseColorPublisher)
-        startStream(mFisheyeCamera, mFisheyePublisher)
+        // Start all the cameras, associating them with their streams. Only the depth stream
+        // triggers a TF/odometry capture: all three used to, which published the same robot
+        // pose three times per frame period (~90 Hz of /tf) from inside the camera callbacks.
+        startStream(mRealsenseDepthCamera, mRealsenseDepthPublisher, triggersTf = true)
+        startStream(mRealsenseColorCamera, mRealsenseColorPublisher, triggersTf = false)
+        startStream(mFisheyeCamera, mFisheyePublisher, triggersTf = false)
+    }
+
+    /** Stops the streams and workers and releases the vision service (never done before: the
+     *  service exhausted its buffers after many app restarts without an unbind). */
+    fun stop() {
+        for (c in mCameras) {
+            try { c.stopStream() } catch (e: Exception) { Log.w(TAG, "stopStream failed", e) }
+        }
+        mCameras.clear()
+        for (w in mWorkers) w.stop()
+        mWorkers.clear()
+        try { mVision.unbindService() } catch (e: Exception) { Log.w(TAG, "unbindService failed", e) }
     }
 
     private fun newStats(name: String): StreamStats {
@@ -93,8 +109,18 @@ class CameraInterface(
         return stats
     }
 
-    private fun startStream(camera: LoomoCamera, publisher: ImageTransport) {
+    private fun startStream(camera: LoomoCamera, publisher: ImageTransport, triggersTf: Boolean) {
         val stats = publisher.stats
+        val res = camera.getResolution()
+        val queue = FrameQueue(stats, QUEUE_DEPTH, res.mWidth * res.mHeight * res.mPixelBytes)
+        val worker = FrameWorker(stats.name, queue, publisher, stats)
+        mWorkers.add(worker)
+        worker.start()
+        mCameras.add(camera)
+
+        // The listener runs inside the vision service's binder call: the service waits for it to
+        // return and overwrites its 5-slot ring if we are slow. So this does nothing but account,
+        // copy the frame into a pooled slot and hand it to the worker thread.
         camera.startStream(object : Vision.FrameListener {
             override fun onNewFrame(streamType: Int, frame: Frame?) {
                 val t0 = System.nanoTime()
@@ -112,9 +138,9 @@ class CameraInterface(
                 }
 
                 // Accounting first: a gap in the service's frame numbers means it captured frames
-                // it never delivered, which happens when this callback is too slow (the service
-                // has a 5-slot ring per stream) or when it dropped them for a non-increasing IMU
-                // timestamp. Both are losses this app must know about.
+                // it never delivered, which happens when this callback is too slow or when the
+                // service dropped them for a non-increasing IMU timestamp. Both are losses this
+                // app must know about.
                 val frameNum = frame.info.frameNum
                 val gap = stats.onSdkFrame(frameNum, frame.info.platformTimeStamp)
                 if (gap > 0) {
@@ -122,17 +148,24 @@ class CameraInterface(
                         StreamStats.TAG,
                         "${stats.name}: vision service skipped $gap frame(s) before frameNum=$frameNum " +
                             "(seen=${stats.sdkFramesSeen.get()} total_gap=${stats.sdkGapFrames.get()} " +
-                            "stamp_us=${frame.info.platformTimeStamp})"
+                            "stamp_us=${frame.info.platformTimeStamp} cb_last_ms=${(System.nanoTime() - t0) / 1e6})"
                     )
                 }
 
-                // Indicate we need the robot TF captured at this timestamp
-                mTfPublisher.indicateTfNeededAtTime(mTfPublisher.captureTfContext(frame.info.platformTimeStamp))
+                queue.offer(frame)
 
-                publisher.publish(frame)
+                if (triggersTf) {
+                    mTfPublisher.indicateTfNeededAtTime(frame.info.platformTimeStamp)
+                }
                 stats.recordCallbackNs(System.nanoTime() - t0)
             }
         })
+    }
+
+    companion object {
+        // Frames of jitter the worker may fall behind before frames are dropped (and counted):
+        // 8 x 33 ms. Memory: colour 8 x 1.2 MB, depth 8 x 614 KB, fisheye 8 x 307 KB.
+        const val QUEUE_DEPTH = 8
     }
 
     private fun stopStream(camera: LoomoCamera) {

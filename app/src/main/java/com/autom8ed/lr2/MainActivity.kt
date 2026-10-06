@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
         // Delivery accounting for the camera streams: one logcat line per stream every 5 s
         // under the tag "StreamStats", plus an error line for every dropped or failed frame.
         mStatsReporter = StatsReporter()
-        mStatsReporter.registerExtra { "tf queue depth=${mTfPublisher.queueDepth()}" }
+        mStatsReporter.registerExtra { "tf queue depth=${mTfPublisher.queueDepth()} drops=${mTfPublisher.queueDrops()}" }
         mStatsReporter.start()
 
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter)
@@ -138,6 +138,16 @@ class MainActivity : ComponentActivity() {
         // Should not block since we are using multithreading
         // should also run as fast as possible, always executing new work as it arrives
         rosExecutor!!.spin()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (this::mCameraInterface.isInitialized) {
+            mCameraInterface.stop()
+        }
+        if (this::mStatsReporter.isInitialized) {
+            mStatsReporter.stop()
+        }
     }
 
     override fun onResume() {

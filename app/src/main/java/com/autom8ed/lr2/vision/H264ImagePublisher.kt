@@ -43,6 +43,8 @@ class H264ImagePublisher(
     private val mCamera: LoomoCamera = camera
     private val mWidth: Int = mCamera.getResolution().mWidth
     private val mHeight: Int = mCamera.getResolution().mHeight
+    // Canvas drawing needs a Bitmap; filled from the frame slot only when a subscriber exists.
+    private val mBitmap: Bitmap = Bitmap.createBitmap(mWidth, mHeight, mCamera.getImageType().getBitmapConfig())
     private var mMediaCodec: MediaCodec = MediaCodec.createByCodecName("OMX.Intel.hw_ve.h264")
     private var mMediaCodecReady: Boolean = false
     // SPS/PPS from MediaCodec's BUFFER_FLAG_CODEC_CONFIG buffer. It is emitted once per encoder
@@ -174,13 +176,15 @@ class H264ImagePublisher(
         tryPublish(msg, stamp.frameNum)
     }
 
-    fun publish(bitmap: Bitmap, platformTimeStamp: Long, frameNum: Int) {
+    fun publish(slot: FrameSlot, platformTimeStamp: Long, frameNum: Int) {
         if (!hasSubscribers()) {
             stats?.topic(mTopic)?.skippedNoSubscriber?.incrementAndGet()
             return
         }
 
         mPerfCounter.start()
+        val bitmap = mBitmap
+        bitmap.copyPixelsFromBuffer(slot.view())
         mMediaCodecSem.acquire()
         try {
             if (mMediaCodecReady) {

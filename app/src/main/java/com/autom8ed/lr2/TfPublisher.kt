@@ -15,7 +15,8 @@ import geometry_msgs.msg.Vector3
 import org.ros2.rcljava.publisher.Publisher
 import org.ros2.rcljava.qos.QoSProfile
 import java.util.concurrent.BlockingQueue
-import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -45,8 +46,10 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     private val mNode: RosNode = node
     private var mThread: Thread? = null
     private val mThreadRun: AtomicBoolean = AtomicBoolean(true)
-    private val mTimestampQueue: BlockingQueue<TfNeededContext> =
-        LinkedBlockingDeque<TfNeededContext>()
+    // Timestamps of frames for which a TF/odometry capture was requested. Bounded: the camera
+    // callback offers and never blocks; the sensor queries run on this class's thread.
+    private val mTimestampQueue: BlockingQueue<Long> = ArrayBlockingQueue<Long>(64)
+    private val mQueueDrops = AtomicLong()
 
     private val TAG: String = "TfPublisher"
 
@@ -72,21 +75,34 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         start()
     }
 
-    /** Depth of the pending TF-capture queue, for StreamStats reporting. */
+    /** Depth of the pending TF-capture queue and the number of dropped requests, for reporting. */
     fun queueDepth(): Int = mTimestampQueue.size
+    fun queueDrops(): Long = mQueueDrops.get()
 
-    fun indicateTfNeededAtTime(ctx: TfNeededContext) {
-        mTimestampQueue.add(ctx)
+    /** Requests a TF/odometry capture for a frame taken at [timestampUs]. Never blocks. */
+    fun indicateTfNeededAtTime(timestampUs: Long) {
+        if (!mTimestampQueue.offer(timestampUs)) {
+            val n = mQueueDrops.incrementAndGet()
+            Log.e(TAG, "TF capture request dropped (queue full, ${mTimestampQueue.size}); total drops $n, stamp_us=$timestampUs")
+        }
     }
 
     fun start() {
         stop()
 
         mThreadRun.set(true)
-        mThread = thread() {
+        mThread = thread(name = "tf-publisher") {
             while (mThreadRun.get()) {
-                val ctx: TfNeededContext = mTimestampQueue.take()
-                publishTf(ctx)
+                val timestampUs: Long = try {
+                    mTimestampQueue.take()
+                } catch (e: InterruptedException) {
+                    return@thread
+                }
+                try {
+                    publishTf(captureTfContext(timestampUs))
+                } catch (t: Throwable) {
+                    Log.e(TAG, "TF capture/publish failed for stamp_us=$timestampUs", t)
+                }
             }
         }
     }
