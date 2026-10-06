@@ -102,6 +102,14 @@ class ImageTransport(
         mCameraInfoPublisher.stats = stats
         mCompressedFramePublisher?.stats = stats
         mH264FramePublisher?.stats = stats
+
+        // Load the message typesupport now. rcljava loads each message type's JNI libraries the
+        // first time the class is used, and that first use was the first publish on the frame
+        // worker: it took ~3 s, the queue filled and ~90 frames per stream were dropped at every
+        // start (2026-10-05). Constructing the messages here does the loading before any frame.
+        sensor_msgs.msg.Image()
+        sensor_msgs.msg.CameraInfo()
+        sensor_msgs.msg.CompressedImage()
     }
 
     companion object {
