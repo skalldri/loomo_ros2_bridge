@@ -512,7 +512,7 @@ class VisionInterface (ctx: android.content.Context, node: RosNode, tfPublisher:
             // Tell the TF publisher we need a transform at this time
             // TODO: can we submit other cameras?
             if (mCamera == Camera.DEPTH) {
-                mTfPublisher.indicateTfNeededAtTime(mTfPublisher.captureTfContext(frame.info.platformTimeStamp))
+                mTfPublisher.indicateTfNeededAtTime(frame.info.platformTimeStamp)
             }
 
             if (mCamera == Camera.DEPTH || mCamera == Camera.FISH_EYE || mCamera == Camera.COLOR) {

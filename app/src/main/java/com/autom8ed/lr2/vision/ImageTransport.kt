@@ -1,12 +1,7 @@
 package com.autom8ed.lr2.vision
 
-import android.graphics.Bitmap
-import android.util.Log
 import com.autom8ed.lr2.PerfCounter
 import com.autom8ed.lr2.RosNode
-import com.autom8ed.lr2.TimeSync
-import com.segway.robot.sdk.vision.Vision
-import com.segway.robot.sdk.vision.frame.Frame
 import org.ros2.rcljava.qos.QoSProfile
 
 fun getCameraInfoTopic(baseImageTopic: String): String {
@@ -72,15 +67,8 @@ class ImageTransport(
     private var mCompressedFramePublisher: CompressedImagePublisher? = null
     private var mH264FramePublisher: H264ImagePublisher? = null
 
-    private val mBitmap: Bitmap = Bitmap.createBitmap(
-        mCamera.getResolution().mWidth,
-        mCamera.getResolution().mHeight,
-        mCamera.getImageType().getBitmapConfig()
-    )
-
     private val TAG = "ImageTransport - $mBaseImageTopic"
     private val mFramePerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - frame")
-    private val mCopyPerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - copyPixels")
 
     init {
         // Compressed publishers
@@ -99,26 +87,21 @@ class ImageTransport(
         mH264FramePublisher?.stats = stats
     }
 
-    fun publish(frame: Frame) {
-        val platformTimeStamp = frame.info.platformTimeStamp
-        val frameNum = frame.info.frameNum
+    /** Runs on the stream's FrameWorker thread with a slot copied out of the SDK callback. */
+    fun publish(slot: FrameSlot) {
+        val platformTimeStamp = slot.platformTimeStampUs
+        val frameNum = slot.frameNum
 
         mFramePerf.start()
-        mCopyPerf.start()
-        mBitmap.copyPixelsFromBuffer(frame.byteBuffer)
-        mCopyPerf.stop()
 
         // Always publish the camera info
         mCameraInfoPublisher.publish(platformTimeStamp, frameNum)
 
-        // These topics are always published for any image type
-        mBaseImagePublisher.publish(mBitmap, platformTimeStamp, frameNum)
+        // The raw image straight from the slot's array: no Bitmap round trip
+        mBaseImagePublisher.publish(slot, platformTimeStamp, frameNum)
 
         // Safe access: does not call if NULL
-        mCompressedFramePublisher?.publish(mBitmap, platformTimeStamp)
-
-        // Safe access: does not call if NULL
-        mH264FramePublisher?.publish(mBitmap, platformTimeStamp, frameNum)
+        mH264FramePublisher?.publish(slot, platformTimeStamp, frameNum)
         mFramePerf.stop()
     }
 }
