@@ -137,7 +137,12 @@ class H264ImagePublisher(
         }
         mInputSurface?.release()
         mInputSurface = null
-        mCodecConfig = null
+        // Keep mCodecConfig: this encoder emits its codec-config buffer (SPS/PPS) only on the
+        // first start after creation. The encoder is stopped and restarted every time the
+        // subscriber count drops to zero and comes back (a DDS-Router restart does that), and
+        // the stream format never changes, so the cached parameter sets stay valid. Clearing
+        // them here left every keyframe after a restart without SPS/PPS and the Jetson decoder
+        // waiting forever.
         synchronized(mPendingStamps) { mPendingStamps.clear() }
     }
 
