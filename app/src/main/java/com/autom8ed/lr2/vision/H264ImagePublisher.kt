@@ -76,10 +76,6 @@ class H264ImagePublisher(
 
     private val mPerfCounter: PerfCounter = PerfCounter("H264Publisher - $mTopic")
     private val mDrawPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - draw")
-    private val mSubsPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - hasSubscribers")
-    private val mSemPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - codecSem")
-    private val mLockPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - lockCanvas")
-    private val mPostPerf: PerfCounter = PerfCounter("H264Publisher - $mTopic - unlockCanvasAndPost")
 
     override val TAG = "H264Publisher - $mTopic"
 
@@ -178,17 +174,12 @@ class H264ImagePublisher(
     }
 
     fun publish(bitmap: Bitmap, platformTimeStamp: Long) {
-        mSubsPerf.start()
-        val subscribed = hasSubscribers()
-        mSubsPerf.stop()
-        if (!subscribed) {
+        if (!hasSubscribers()) {
             return
         }
 
         mPerfCounter.start()
-        mSemPerf.start()
         mMediaCodecSem.acquire()
-        mSemPerf.stop()
         try {
             if (mMediaCodecReady) {
                 val surface = mInputSurface
@@ -209,15 +200,11 @@ class H264ImagePublisher(
     private fun feedSurface(surface: Surface, bitmap: Bitmap, platformTimeStamp: Long): Boolean {
         mDrawPerf.start()
         try {
-            mLockPerf.start()
             val canvas = surface.lockCanvas(null)
-            mLockPerf.stop()
             try {
                 canvas.drawBitmap(bitmap, 0f, 0f, null)
             } finally {
-                mPostPerf.start()
                 surface.unlockCanvasAndPost(canvas)
-                mPostPerf.stop()
             }
         } catch (e: Exception) {
             Log.e(TAG, "lockCanvas() on the encoder input Surface failed; falling back to buffer input", e)
