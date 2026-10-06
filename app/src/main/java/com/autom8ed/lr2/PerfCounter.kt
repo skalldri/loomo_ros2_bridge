@@ -71,6 +71,9 @@ class PerfCounter(name: String) {
             Log.d(mName, "Actual Execution Rate (Avg, $mPrintIntervalSeconds s): $timeElapsedExecutionRateAvg Hz")
 
             mLastPrintTime = mEndTime
+            // The averages are meant to cover the print interval, not the process lifetime
+            // (and the queue grew without bound).
+            mResultsQueue.clear()
         }
     }
 
