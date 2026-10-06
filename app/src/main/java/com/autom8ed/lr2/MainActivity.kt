@@ -78,6 +78,14 @@ class MainActivity : ComponentActivity() {
 
         android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "DEFAULT", true)
 
+        // Asynchronous publishing: rcl_publish() returns once the sample is in the writer
+        // history and Fast DDS's sender thread does the fragmentation and the UDP sends. In the
+        // default synchronous mode the publishing thread did the ~10-20 sendto() calls of a
+        // 614 KB depth frame itself (12-23 ms per frame measured on the frame workers, with three
+        // streams contending for the one link). rmw_fastrtps reads this variable for every
+        // DataWriter. Set to SYNCHRONOUS to compare.
+        android.system.Os.setenv("RMW_FASTRTPS_PUBLICATION_MODE", "ASYNCHRONOUS", true)
+
         //android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "LARGE_DATA", true)
 
         RCLJava.rclJavaInit()
