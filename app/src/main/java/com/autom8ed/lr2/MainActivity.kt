@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mHeadInterface: HeadInterface
     private lateinit var mAudioInterface: AudioInterface
     private lateinit var mWatchdog: Watchdog
+    private lateinit var mStatsReporter: StatsReporter
 
     private lateinit var mNode: RosNode
 
@@ -109,8 +110,13 @@ class MainActivity : ComponentActivity() {
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        // Color camera publishes too slow to be of much use...
-        mCameraInterface = CameraInterface(this, mNode, mTfPublisher)
+        // Delivery accounting for the camera streams: one logcat line per stream every 5 s
+        // under the tag "StreamStats", plus an error line for every dropped or failed frame.
+        mStatsReporter = StatsReporter()
+        mStatsReporter.registerExtra { "tf queue depth=${mTfPublisher.queueDepth()}" }
+        mStatsReporter.start()
+
+        mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter)
 
         GlobalScope.launch {
             mCameraInterface.start()

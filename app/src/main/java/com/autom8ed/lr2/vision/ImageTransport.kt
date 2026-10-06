@@ -50,9 +50,11 @@ class ImageTransport(
     node: RosNode,
     baseImageTopic: String,
     camera: LoomoCamera,
+    stats: StreamStats,
     qos: QoSProfile = QoSProfile.SENSOR_DATA
 ) {
     private val mNode: RosNode = node
+    val stats: StreamStats = stats
     private val mQos: QoSProfile = qos
     private val mCamera: LoomoCamera = camera
     private val mBaseImageTopic: String = baseImageTopic
@@ -90,25 +92,33 @@ class ImageTransport(
         if (mCamera.getImageType().supportsH264Publisher()) {
             mH264FramePublisher = H264ImagePublisher(mNode, mH264ImageTopic, mCamera, mQos)
         }
+
+        mBaseImagePublisher.stats = stats
+        mCameraInfoPublisher.stats = stats
+        mCompressedFramePublisher?.stats = stats
+        mH264FramePublisher?.stats = stats
     }
 
     fun publish(frame: Frame) {
+        val platformTimeStamp = frame.info.platformTimeStamp
+        val frameNum = frame.info.frameNum
+
         mFramePerf.start()
         mCopyPerf.start()
         mBitmap.copyPixelsFromBuffer(frame.byteBuffer)
         mCopyPerf.stop()
 
         // Always publish the camera info
-        mCameraInfoPublisher.publish(frame)
+        mCameraInfoPublisher.publish(platformTimeStamp, frameNum)
 
         // These topics are always published for any image type
-        mBaseImagePublisher.publish(mBitmap, frame.info.platformTimeStamp)
+        mBaseImagePublisher.publish(mBitmap, platformTimeStamp, frameNum)
 
         // Safe access: does not call if NULL
-        mCompressedFramePublisher?.publish(mBitmap, frame.info.platformTimeStamp)
+        mCompressedFramePublisher?.publish(mBitmap, platformTimeStamp)
 
         // Safe access: does not call if NULL
-        mH264FramePublisher?.publish(mBitmap, frame.info.platformTimeStamp)
+        mH264FramePublisher?.publish(mBitmap, platformTimeStamp, frameNum)
         mFramePerf.stop()
     }
 }
