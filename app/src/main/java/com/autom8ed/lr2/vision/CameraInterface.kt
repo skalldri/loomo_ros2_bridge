@@ -2,6 +2,7 @@ package com.autom8ed.lr2.vision
 
 import android.util.Log
 import com.autom8ed.lr2.RosNode
+import com.autom8ed.lr2.BridgeConfig
 import com.autom8ed.lr2.StatsReporter
 import com.autom8ed.lr2.TfPublisher
 import com.segway.robot.sdk.base.bind.ServiceBinder
@@ -14,7 +15,8 @@ class CameraInterface(
     ctx: android.content.Context,
     node: RosNode,
     tfPublisher: TfPublisher,
-    statsReporter: StatsReporter
+    statsReporter: StatsReporter,
+    config: BridgeConfig
 ) {
 
     private val TAG: String = "CameraInterface"
@@ -36,12 +38,7 @@ class CameraInterface(
     private val mNode: RosNode = node
     private val mTfPublisher: TfPublisher = tfPublisher
     private val mStatsReporter: StatsReporter = statsReporter
-    private lateinit var mRealsenseDepthCamera: LoomoCamera
-    private lateinit var mRealsenseColorCamera: LoomoCamera
-    private lateinit var mFisheyeCamera: LoomoCamera
-    private lateinit var mRealsenseDepthPublisher: ImageTransport
-    private lateinit var mRealsenseColorPublisher: ImageTransport
-    private lateinit var mFisheyePublisher: ImageTransport
+    private val mConfig: BridgeConfig = config
     private val mWorkers = ArrayList<FrameWorker>()
     private val mCameras = ArrayList<LoomoCamera>()
 
@@ -58,37 +55,35 @@ class CameraInterface(
             delay(100);
         }
 
-        // Setup the camera publishers, each with its own delivery accounting
-        mRealsenseDepthCamera = RealsenseDepthCamera(mVision)
-        mRealsenseDepthPublisher = ImageTransport(
-            mNode,
-            "/loomo/realsense/depth/image_depth_rect",
-            mRealsenseDepthCamera,
-            newStats("depth")
-        )
-
-        mRealsenseColorCamera = RealsenseColorCamera(mVision)
-        mRealsenseColorPublisher = ImageTransport(
-            mNode,
-            "/loomo/realsense/color/image_color",
-            mRealsenseColorCamera,
-            newStats("colour")
-        )
-
-        mFisheyeCamera = FisheyeCamera(mVision)
-        mFisheyePublisher = ImageTransport(
-            mNode,
-            "/loomo/fisheye/image",
-            mFisheyeCamera,
-            newStats("fisheye")
-        )
-
-        // Start all the cameras, associating them with their streams. Only the depth stream
-        // triggers a TF/odometry capture: all three used to, which published the same robot
-        // pose three times per frame period (~90 Hz of /tf) from inside the camera callbacks.
-        startStream(mRealsenseDepthCamera, mRealsenseDepthPublisher, triggersTf = true)
-        startStream(mRealsenseColorCamera, mRealsenseColorPublisher, triggersTf = false)
-        startStream(mFisheyeCamera, mFisheyePublisher, triggersTf = false)
+        // One camera, transport and delivery accounting per enabled stream. Only the depth
+        // stream triggers a TF/odometry capture: all three used to, which published the same
+        // robot pose three times per frame period (~90 Hz of /tf) from inside the camera callbacks.
+        //
+        // Everything is constructed before any stream is started, and the streams are then
+        // started back to back. The vision service takes ~1 s to bring the RealSense up after the
+        // first startListenFrame(); a request for another stream that arrives during that window
+        // is answered "nothing changed, will not restart" and that stream never delivers a frame
+        // (seen on 2026-10-06 when the starts were interleaved with the ~2 s of set-up work).
+        val streams = ArrayList<Triple<LoomoCamera, ImageTransport, Boolean>>()
+        for ((cfg, topic, triggersTf) in listOf(
+            Triple(mConfig.depth, "/loomo/realsense/depth/image_depth_rect", true),
+            Triple(mConfig.colour, "/loomo/realsense/color/image_color", false),
+            Triple(mConfig.fisheye, "/loomo/fisheye/image", false)
+        )) {
+            if (!cfg.enabled) {
+                Log.w(TAG, "${cfg.name} stream disabled by configuration")
+                continue
+            }
+            val camera: LoomoCamera = when (cfg.name) {
+                "depth" -> RealsenseDepthCamera(mVision)
+                "colour" -> RealsenseColorCamera(mVision)
+                else -> FisheyeCamera(mVision)
+            }
+            streams.add(Triple(camera, ImageTransport(mNode, topic, camera, newStats(cfg.name), cfg), triggersTf))
+        }
+        for ((camera, transport, triggersTf) in streams) {
+            startStream(camera, transport, triggersTf)
+        }
     }
 
     /** Stops the streams and workers and releases the vision service (never done before: the
@@ -112,7 +107,7 @@ class CameraInterface(
     private fun startStream(camera: LoomoCamera, publisher: ImageTransport, triggersTf: Boolean) {
         val stats = publisher.stats
         val res = camera.getResolution()
-        val queue = FrameQueue(stats, QUEUE_DEPTH, res.mWidth * res.mHeight * res.mPixelBytes)
+        val queue = FrameQueue(stats, mConfig.queueDepth, res.mWidth * res.mHeight * res.mPixelBytes)
         val worker = FrameWorker(stats.name, queue, publisher, stats)
         mWorkers.add(worker)
         worker.start()
@@ -160,12 +155,6 @@ class CameraInterface(
                 stats.recordCallbackNs(System.nanoTime() - t0)
             }
         })
-    }
-
-    companion object {
-        // Frames of jitter the worker may fall behind before frames are dropped (and counted):
-        // 8 x 33 ms. Memory: colour 8 x 1.2 MB, depth 8 x 614 KB, fisheye 8 x 307 KB.
-        const val QUEUE_DEPTH = 8
     }
 
     private fun stopStream(camera: LoomoCamera) {
