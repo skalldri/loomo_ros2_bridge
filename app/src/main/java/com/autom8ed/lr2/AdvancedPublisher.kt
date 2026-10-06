@@ -79,7 +79,14 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
             return false
         }
         return try {
+            val t0 = System.nanoTime()
             mPublisher.publish(msg)
+            val dtMs = (System.nanoTime() - t0) / 1e6
+            if (dtMs > SLOW_PUBLISH_MS) {
+                // A publish that takes longer than a few frame periods is a delivery problem in
+                // the making (the frame queue behind it fills up); say which topic and how long.
+                Log.w(TAG, "slow publish on $mTopic: ${"%.1f".format(dtMs)} ms (frameNum=$frameNum, #${counters?.published?.get() ?: -1})")
+            }
             counters?.published?.incrementAndGet()
             true
         } catch (e: Exception) {
@@ -97,6 +104,10 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
 
     open fun onSubscriptionStateChange(hasSubscribers: Boolean) {
 
+    }
+
+    companion object {
+        const val SLOW_PUBLISH_MS = 200.0
     }
 }
 
