@@ -1,6 +1,7 @@
 package com.autom8ed.lr2
 
 import android.util.Log
+import com.autom8ed.lr2.vision.StreamStats
 import org.ros2.rcljava.consumers.Consumer
 import org.ros2.rcljava.events.EventHandler
 import org.ros2.rcljava.interfaces.MessageDefinition
@@ -18,7 +19,12 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
     private val mQos: QoSProfile = qos
     private val mPublisher: Publisher<MessageT> = mNode.node.createPublisher(type, mTopic, mQos)
     private val mSem: Semaphore = Semaphore(1)
-    private var mHasSubscribers: Boolean = false
+    // Read lock-free on every frame; the semaphore only orders the matched-event handler and
+    // enableSubscriptionStateCallbacks() against each other.
+    @Volatile private var mHasSubscribers: Boolean = false
+
+    /** Delivery accounting for the stream this publisher belongs to; set by the owning transport. */
+    @Volatile var stats: StreamStats? = null
     // onSubscriptionStateChange() is only forwarded once a subclass that overrides it has
     // called enableSubscriptionStateCallbacks(); see that method.
     private var mCallbacksEnabled: Boolean = false
@@ -58,17 +64,36 @@ open class AdvancedPublisher<MessageT : MessageDefinition?>(
     }
 
     open fun publish(msg: MessageT) {
-        if (hasSubscribers()) {
+        tryPublish(msg, -1)
+    }
+
+    /**
+     * Publishes if a subscriber is matched. Returns true only when rcl accepted the message.
+     * Every other outcome is counted in [stats] (no subscriber, or a failure, which is also
+     * logged with the frame number), so no frame disappears silently.
+     */
+    fun tryPublish(msg: MessageT, frameNum: Int): Boolean {
+        val counters = stats?.topic(mTopic)
+        if (!hasSubscribers()) {
+            counters?.skippedNoSubscriber?.incrementAndGet()
+            return false
+        }
+        return try {
             mPublisher.publish(msg)
+            counters?.published?.incrementAndGet()
+            true
+        } catch (e: Exception) {
+            val s = stats
+            if (s != null) {
+                s.recordPublishFailure(mTopic, frameNum, e)
+            } else {
+                Log.e(TAG, "publish failed on $mTopic (frameNum=$frameNum)", e)
+            }
+            false
         }
     }
 
-    fun hasSubscribers(): Boolean {
-        mSem.acquire()
-        val hasSubs = mHasSubscribers
-        mSem.release()
-        return hasSubs
-    }
+    fun hasSubscribers(): Boolean = mHasSubscribers
 
     open fun onSubscriptionStateChange(hasSubscribers: Boolean) {
 

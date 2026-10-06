@@ -13,7 +13,6 @@ import org.ros2.rcljava.qos.QoSProfile
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
 import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
 
 /**
  * Publishes the colour stream as H.264 (sensor_msgs/CompressedImage, format "h264", Annex B).
@@ -65,7 +64,9 @@ class H264ImagePublisher(
     // Encoder presentation time (us) -> platform timestamp of the frame that produced it, so the
     // published header carries the camera's timestamp. With Surface input the presentation time
     // is the system clock at unlockCanvasAndPost(), hence nearest-match rather than equality.
-    private val mPendingStamps = ArrayDeque<Pair<Long, Long>>()
+    private class PendingStamp(val presentationTimeUs: Long, val platformTimeStampUs: Long, val frameNum: Int)
+    private val mPendingStamps = ArrayDeque<PendingStamp>()
+    private var mEncoderStarts: Int = 0
 
     // All MediaCodec calls go through this lock: the drain thread owns output buffers, the
     // camera thread only queues input buffers on the fallback path (Surface drawing needs no
@@ -161,25 +162,21 @@ class H264ImagePublisher(
         }
     }
 
-    private fun publishCompressedImage(data: ByteArray, platformTimeStamp: Long) {
+    private fun publishCompressedImage(data: ByteArray, stamp: PendingStamp) {
         // Assign to ROS msg
         val msg = sensor_msgs.msg.CompressedImage()
         msg.data = data
 
         msg.header.frameId = mCamera.getTfOpticalFrameId()
         msg.format = "h264"
+        FrameStamp.apply(msg.header.stamp, stamp.platformTimeStampUs, stamp.frameNum)
 
-        msg.header.stamp.sec =
-            TimeUnit.SECONDS.convert(platformTimeStamp, TimeUnit.MICROSECONDS)
-                .toInt()
-        msg.header.stamp.nanosec =
-            (platformTimeStamp % (1000 * 1000)).toInt() * (1000)
-
-        publish(msg)
+        tryPublish(msg, stamp.frameNum)
     }
 
-    fun publish(bitmap: Bitmap, platformTimeStamp: Long) {
+    fun publish(bitmap: Bitmap, platformTimeStamp: Long, frameNum: Int) {
         if (!hasSubscribers()) {
+            stats?.topic(mTopic)?.skippedNoSubscriber?.incrementAndGet()
             return
         }
 
@@ -189,9 +186,9 @@ class H264ImagePublisher(
             if (mMediaCodecReady) {
                 val surface = mInputSurface
                 if (mUseSurfaceInput && surface != null) {
-                    feedSurface(surface, bitmap, platformTimeStamp)
+                    feedSurface(surface, bitmap, platformTimeStamp, frameNum)
                 } else {
-                    feedBuffer(bitmap, platformTimeStamp)
+                    feedBuffer(bitmap, platformTimeStamp, frameNum)
                 }
             }
         } finally {
@@ -202,7 +199,7 @@ class H264ImagePublisher(
 
     // Draw the frame onto the encoder's input Surface. Returns false (and switches to buffer
     // input for the rest of the run) if the Surface cannot be locked for CPU drawing.
-    private fun feedSurface(surface: Surface, bitmap: Bitmap, platformTimeStamp: Long): Boolean {
+    private fun feedSurface(surface: Surface, bitmap: Bitmap, platformTimeStamp: Long, frameNum: Int): Boolean {
         mDrawPerf.start()
         try {
             val canvas = surface.lockCanvas(null)
@@ -211,7 +208,7 @@ class H264ImagePublisher(
             } finally {
                 // Record the stamp before posting: the drain thread can dequeue the encoded
                 // frame before this call returns, and must find the entry already there.
-                rememberStamp(System.nanoTime() / 1000, platformTimeStamp)
+                rememberStamp(System.nanoTime() / 1000, platformTimeStamp, frameNum)
                 surface.unlockCanvasAndPost(canvas)
             }
         } catch (e: Exception) {
@@ -227,7 +224,7 @@ class H264ImagePublisher(
     }
 
     // Fallback: RGBA -> NV12 on the CPU into an encoder input buffer.
-    private fun feedBuffer(bitmap: Bitmap, platformTimeStamp: Long): Boolean {
+    private fun feedBuffer(bitmap: Bitmap, platformTimeStamp: Long, frameNum: Int): Boolean {
         mByteBuffer.clear()
         bitmap.copyPixelsToBuffer(mByteBuffer)
         synchronized(mCodecLock) {
@@ -240,15 +237,15 @@ class H264ImagePublisher(
             mDrawPerf.start()
             encodeYUV420SP(inputBuffer, mByteBuffer, mWidth, mHeight)
             mDrawPerf.stop()
-            rememberStamp(platformTimeStamp, platformTimeStamp)
+            rememberStamp(platformTimeStamp, platformTimeStamp, frameNum)
             mMediaCodec.queueInputBuffer(inputBufferIndex, 0, kYuv420Size, platformTimeStamp, 0)
         }
         return true
     }
 
-    private fun rememberStamp(presentationTimeUs: Long, platformTimeStamp: Long) {
+    private fun rememberStamp(presentationTimeUs: Long, platformTimeStamp: Long, frameNum: Int) {
         synchronized(mPendingStamps) {
-            mPendingStamps.addLast(Pair(presentationTimeUs, platformTimeStamp))
+            mPendingStamps.addLast(PendingStamp(presentationTimeUs, platformTimeStamp, frameNum))
             while (mPendingStamps.size > kMaxPendingStamps) {
                 mPendingStamps.removeFirst()
             }
@@ -258,16 +255,16 @@ class H264ImagePublisher(
     // Platform timestamp of the input frame closest to this output's presentation time; entries
     // up to and including the match are dropped (output is in presentation order). Falls back
     // to the current platform clock if nothing is pending.
-    private fun stampFor(presentationTimeUs: Long): Long {
+    private fun stampFor(presentationTimeUs: Long): PendingStamp {
         synchronized(mPendingStamps) {
-            var best: Pair<Long, Long>? = null
+            var best: PendingStamp? = null
             for (entry in mPendingStamps) {
-                if (best == null || Math.abs(entry.first - presentationTimeUs) < Math.abs(best.first - presentationTimeUs)) {
+                if (best == null || Math.abs(entry.presentationTimeUs - presentationTimeUs) < Math.abs(best.presentationTimeUs - presentationTimeUs)) {
                     best = entry
                 }
             }
             if (best == null) {
-                return System.nanoTime() / 1000
+                return PendingStamp(presentationTimeUs, System.nanoTime() / 1000, -1)
             }
             while (mPendingStamps.isNotEmpty()) {
                 val head = mPendingStamps.removeFirst()
@@ -275,7 +272,7 @@ class H264ImagePublisher(
                     break
                 }
             }
-            return best.second
+            return best
         }
     }
 
@@ -431,6 +428,9 @@ class H264ImagePublisher(
             Log.i(TAG, "H.264 subscriber detected! Starting MediaCodec...")
             configureAndStartMediaCodec()
             mMediaCodecReady = true
+            if (++mEncoderStarts > 1) {
+                stats?.encoderRestarts?.incrementAndGet()
+            }
         }
         else {
             Log.i(TAG, "H.264 detected loss of all subscribers! Stopping MediaCodec...")

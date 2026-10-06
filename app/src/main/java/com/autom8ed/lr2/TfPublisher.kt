@@ -72,6 +72,9 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         start()
     }
 
+    /** Depth of the pending TF-capture queue, for StreamStats reporting. */
+    fun queueDepth(): Int = mTimestampQueue.size
+
     fun indicateTfNeededAtTime(ctx: TfNeededContext) {
         mTimestampQueue.add(ctx)
     }
