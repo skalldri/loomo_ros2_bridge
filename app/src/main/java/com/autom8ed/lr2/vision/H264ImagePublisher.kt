@@ -204,6 +204,9 @@ class H264ImagePublisher(
             try {
                 canvas.drawBitmap(bitmap, 0f, 0f, null)
             } finally {
+                // Record the stamp before posting: the drain thread can dequeue the encoded
+                // frame before this call returns, and must find the entry already there.
+                rememberStamp(System.nanoTime() / 1000, platformTimeStamp)
                 surface.unlockCanvasAndPost(canvas)
             }
         } catch (e: Exception) {
@@ -215,7 +218,6 @@ class H264ImagePublisher(
         } finally {
             mDrawPerf.stop()
         }
-        rememberStamp(System.nanoTime() / 1000, platformTimeStamp)
         return true
     }
 
@@ -233,9 +235,9 @@ class H264ImagePublisher(
             mDrawPerf.start()
             encodeYUV420SP(inputBuffer, mByteBuffer, mWidth, mHeight)
             mDrawPerf.stop()
+            rememberStamp(platformTimeStamp, platformTimeStamp)
             mMediaCodec.queueInputBuffer(inputBufferIndex, 0, kYuv420Size, platformTimeStamp, 0)
         }
-        rememberStamp(platformTimeStamp, platformTimeStamp)
         return true
     }
 
