@@ -56,6 +56,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         handler = Handler(mainLooper)
 
+        // Which streams and transports run, from bridge.properties and the intent extras. Loaded
+        // before RCLJava.rclJavaInit() because dds.priority decides the Fast DDS profile below.
+        val config = BridgeConfig.load(this, intent)
+        config.log()
+
         // Must be called before RCLJava.rclJavaInit() to override the automatic DDS/RTPS discovery
         // protocol!
         // Desktop
@@ -89,6 +94,15 @@ class MainActivity : ComponentActivity() {
 
         //android.system.Os.setenv("FASTDDS_BUILTIN_TRANSPORTS", "LARGE_DATA", true)
 
+        // With one asynchronous sender, TF, odometry and joint states queued behind ~12 MB/s of
+        // raw images and almost never left the app (loomo_ros2_bridge#17). The profile gives
+        // them priority over the images.
+        if (config.ddsPriority) {
+            FastDdsProfile.install(this)?.let {
+                android.system.Os.setenv("FASTRTPS_DEFAULT_PROFILES_FILE", it, true)
+            }
+        }
+
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
 
@@ -119,9 +133,6 @@ class MainActivity : ComponentActivity() {
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
-        // Which streams and transports run, from bridge.properties and the intent extras.
-        val config = BridgeConfig.load(this, intent)
-        config.log()
         FrameStamp.TAG_FRAME_NUM = config.tagFrameNum
 
         // Delivery accounting for the camera streams: one logcat line per stream every few
