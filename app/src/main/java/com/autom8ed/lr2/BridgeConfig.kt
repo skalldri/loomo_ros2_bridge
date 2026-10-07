@@ -31,6 +31,8 @@ import java.util.Properties
  *  - `stats.tagFrameNum`: carry `frameNum % 1000` in the low digits of header.stamp.nanosec
  *    so the receiver can check for gaps (default true); see FrameStamp.
  *  - `stats.periodS`: seconds between StreamStats report lines (default 5).
+ *  - `dds.priority`: load the Fast DDS profile (assets/fastdds_profiles.xml) that sends TF,
+ *    odometry and joint states ahead of the camera images (default true); see FastDdsProfile.
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -44,6 +46,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val queueDepth = int("queue.depth", 8, min = 1)
     val tagFrameNum = bool("stats.tagFrameNum", true)
     val statsPeriodS = int("stats.periodS", 5, min = 1)
+    val ddsPriority = bool("dds.priority", true)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -77,7 +80,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     fun log() {
         Log.i(TAG, "sources: $sources")
         Log.i(TAG, "streams: $depth $colour $fisheye")
-        Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS")
+        Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -90,7 +93,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "depth.enabled", "depth.raw", "depth.h264",
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
-            "queue.depth", "stats.tagFrameNum", "stats.periodS"
+            "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {

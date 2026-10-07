@@ -83,6 +83,7 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `queue.depth` | `8` | frames of jitter a worker may fall behind before frames are dropped |
 | `stats.tagFrameNum` | `true` | frame number in the stamp, see above |
 | `stats.periodS` | `5` | seconds between `StreamStats` lines |
+| `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom` and `/loomo/joint_states` get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation
 The Loomo was discontinued at some point between 2019 and 2024. For now, the SDK documentation is still available [here](https://developer.segwayrobotics.com/developer/documents/segway-robots-sdk.html), and the SDK libraries can still be downloaded from the online Maven repositories.

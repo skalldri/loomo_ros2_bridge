@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Loaded through FASTRTPS_DEFAULT_PROFILES_FILE when dds.priority=true (FastDdsProfile.kt).
+
+  With RMW_FASTRTPS_PUBLICATION_MODE=ASYNCHRONOUS every DataWriter sends through Fast DDS's one
+  built-in async flow controller, first come first served. Its sender thread spends its time
+  pushing ~12 MB/s of raw fisheye and depth samples, and the tiny TF, odometry and joint state
+  samples queued behind them: /loomo/odom delivered 0 msg/s and TF ~1/s while the images flowed
+  (loomo_ros2_bridge#17, measured 2026-10-07).
+
+  Here those three topics get their own flow controller, which has its own sender thread. Sender
+  threads only share the participant's send lock, taken per datagram, so a small sample waits for
+  at most about one 64 KB image datagram instead of every queued image. The image writers keep the
+  built-in controller and are unchanged. No priorities or bandwidth limits: a priority scheduler
+  only orders whole samples (a small one would still wait for a whole 307 KB image), and a
+  bandwidth limit caps throughput.
+
+  rmw_fastrtps (jazzy) looks a writer profile up by the ROS topic name ("/tf", not "rt/tf"), forces
+  only publishMode/kind from RMW_FASTRTPS_PUBLICATION_MODE and keeps flow_controller_name. A named
+  profile starts from blank defaults, so each one states its publishMode in full.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <participant profile_name="loomo_bridge_participant" is_default_profile="true">
+      <rtps>
+        <flow_controller_descriptor_list>
+          <flow_controller_descriptor>
+            <name>small_topics</name>
+            <scheduler>FIFO</scheduler>
+          </flow_controller_descriptor>
+        </flow_controller_descriptor_list>
+      </rtps>
+    </participant>
+
+    <data_writer profile_name="/tf">
+      <qos>
+        <publishMode>
+          <kind>ASYNCHRONOUS</kind>
+          <flow_controller_name>small_topics</flow_controller_name>
+        </publishMode>
+      </qos>
+    </data_writer>
+
+    <data_writer profile_name="/loomo/odom">
+      <qos>
+        <publishMode>
+          <kind>ASYNCHRONOUS</kind>
+          <flow_controller_name>small_topics</flow_controller_name>
+        </publishMode>
+      </qos>
+    </data_writer>
+
+    <data_writer profile_name="/loomo/joint_states">
+      <qos>
+        <publishMode>
+          <kind>ASYNCHRONOUS</kind>
+          <flow_controller_name>small_topics</flow_controller_name>
+        </publishMode>
+      </qos>
+    </data_writer>
+  </profiles>
+</dds>
