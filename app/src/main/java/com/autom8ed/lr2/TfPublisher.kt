@@ -593,7 +593,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         // Intentionally not setting the mOdomMsg.pose.covariance matrix
 
         odomMsg.twist.twist.linear.x = pose2D.linearVelocity.toDouble()
-        odomMsg.twist.twist.angular.z = pose2D.linearVelocity.toDouble()
+        odomMsg.twist.twist.angular.z = pose2D.angularVelocity.toDouble()
 
         // Intentionally not setting the mOdomMsg.twist.covariance matrix
 
