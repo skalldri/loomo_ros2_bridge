@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mAudioInterface: AudioInterface
     private lateinit var mWatchdog: Watchdog
     private lateinit var mStatsReporter: StatsReporter
+    private lateinit var mNetworkGate: NetworkGate
 
     private lateinit var mNode: RosNode
 
@@ -103,9 +104,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        RCLJava.rclJavaInit()
-        rosExecutor = this.createExecutor()
-
         enableEdgeToEdge()
         setContent {
             LoomoROS2BridgeTheme {
@@ -117,6 +115,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // ROS (and with it the Fast DDS participant) starts only once the Ethernet link to the
+        // Jetson has an address, and the app restarts if that network is lost or replaced; see
+        // NetworkGate for why.
+        mNetworkGate = NetworkGate(
+            this,
+            restartExtras = intent?.extras,
+            beforeRestart = { stopStreams() },
+            onReady = { startRos(config) },
+        )
+        mNetworkGate.start()
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun startRos(config: BridgeConfig) {
+        RCLJava.rclJavaInit()
+        rosExecutor = this.createExecutor()
 
         mTimeSync = TimeSync()
 
@@ -167,6 +182,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopStreams()
+    }
+
+    private fun stopStreams() {
         if (this::mCameraInterface.isInitialized) {
             mCameraInterface.stop()
         }

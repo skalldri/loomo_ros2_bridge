@@ -1,23 +1,27 @@
 package com.autom8ed.lr2
 
+import android.util.Log
 import org.ros2.rcljava.publisher.Publisher
-import org.ros2.rcljava.qos.QoSProfile
 import std_msgs.msg.Empty
 import kotlin.concurrent.thread
 
 class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadInterface) {
 
     val mNode: RosNode = node
+    // RELIABLE like its consumer, the Jetson's loomo_watchdog (rclpy default QoS). With the
+    // previous best-effort writer the heartbeat never crossed DDS-Router to domain 0 (2026-10-12:
+    // 2 Hz on domain 1, 0 on domain 0), so the Jetson could not tell whether the app was alive.
     val mWatchdogPublisher: Publisher<std_msgs.msg.Empty> =
         mNode.node.createPublisher(
             std_msgs.msg.Empty::class.java,
-            "/loomo/android_watchdog",
-            QoSProfile.SENSOR_DATA
+            "/loomo/android_watchdog"
         )
     val mHeadInterface: HeadInterface = headInterface
     val mWatchdogPublisherThread: Thread
     val mWatchdogSubscriberThread: Thread
 
+    // Written by the executor thread, read and reset by the check thread.
+    @Volatile
     var mJetsonAlive: Boolean = false
 
     init {
@@ -33,6 +37,9 @@ class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadI
 
         mWatchdogSubscriberThread = thread() {
             var lastJetsonAlive: Boolean = false
+            // Seconds without a Jetson heartbeat; logged every MISSING_LOG_S so a silent link shows
+            // in logcat (the LEDs stay white if the heartbeat never arrived, red if it stopped).
+            var missingS = 0
             while (true) {
                 // Every second, check to ensure the Jetson is still connected
                 Thread.sleep((1000.0f).toLong())
@@ -41,11 +48,21 @@ class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadI
                 if (lastJetsonAlive != mJetsonAlive) {
                     // Jetson has connected for the first time!
                     if (mJetsonAlive) {
+                        Log.i(TAG, "Jetson heartbeat received after ${missingS} s without")
                         mHeadInterface.setLightMode(mHeadInterface.HEAD_LIGHT_MODE_GREEN_FADE_IN_OUT)
                     }
                     // Jetson has disconnected, set error indication
                     else {
+                        Log.e(TAG, "Jetson heartbeat lost")
                         mHeadInterface.setLightMode(mHeadInterface.HEAD_LIGHT_MODE_RED_FLASHING)
+                    }
+                }
+                if (mJetsonAlive) {
+                    missingS = 0
+                } else {
+                    missingS++
+                    if (missingS % MISSING_LOG_S == 0) {
+                        Log.e(TAG, "no Jetson heartbeat on /loomo/jetson_watchdog for ${missingS} s")
                     }
                 }
 
@@ -61,5 +78,10 @@ class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadI
         mNode.node.createSubscription(std_msgs.msg.Empty::class.java, "/loomo/jetson_watchdog") {
             mJetsonAlive = true
         }
+    }
+
+    companion object {
+        const val TAG = "Watchdog"
+        private const val MISSING_LOG_S = 30
     }
 }
