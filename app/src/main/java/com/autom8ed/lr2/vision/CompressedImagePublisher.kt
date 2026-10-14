@@ -3,10 +3,10 @@ package com.autom8ed.lr2.vision
 import android.graphics.Bitmap
 import com.autom8ed.lr2.AdvancedPublisher
 import com.autom8ed.lr2.RosNode
+import com.autom8ed.lr2.TimeSync
 import com.segway.robot.sdk.vision.frame.Frame
 import org.ros2.rcljava.qos.QoSProfile
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.TimeUnit
 
 class CompressedImagePublisher(
     node: RosNode,
@@ -33,11 +33,7 @@ class CompressedImagePublisher(
             msg.header.frameId = mCamera.getTfOpticalFrameId()
             msg.format = "png"
 
-            msg.header.stamp.sec =
-                TimeUnit.SECONDS.convert(platformTimeStamp, TimeUnit.MICROSECONDS)
-                    .toInt()
-            msg.header.stamp.nanosec =
-                (platformTimeStamp % (1000 * 1000)).toInt() * (1000)
+            TimeSync.toJetson(msg.header.stamp, platformTimeStamp)
 
             publish(msg)
         }

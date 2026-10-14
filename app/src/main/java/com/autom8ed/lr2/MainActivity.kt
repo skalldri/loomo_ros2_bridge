@@ -32,7 +32,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var mLocomotionPlatformInterface: LocomotionPlatformInterface
     private lateinit var mSensorInterface: SensorInterface
     private lateinit var mTfPublisher: TfPublisher
-    private lateinit var mTimeSync: TimeSync
     private lateinit var mHeadInterface: HeadInterface
     private lateinit var mAudioInterface: AudioInterface
     private lateinit var mWatchdog: Watchdog
@@ -123,17 +122,20 @@ class MainActivity : ComponentActivity() {
             this,
             restartExtras = intent?.extras,
             beforeRestart = { stopStreams() },
-            onReady = { startRos(config) },
+            onReady = { network -> startRos(config, network) },
         )
         mNetworkGate.start()
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun startRos(config: BridgeConfig) {
+    private fun startRos(config: BridgeConfig, network: android.net.Network) {
+        // Clock offset to the Jetson, so every stamp is on the Jetson's clock. Started first: the
+        // first answer normally arrives while the rest is still being set up, and stamped
+        // messages are held back until it does (see TimeSync).
+        TimeSync.start(network, config.clockServer, config.clockSync)
+
         RCLJava.rclJavaInit()
         rosExecutor = this.createExecutor()
-
-        mTimeSync = TimeSync()
 
         mNode = RosNode("loomo_node")
         changeState(true);
@@ -162,7 +164,7 @@ class MainActivity : ComponentActivity() {
             mCameraInterface.start()
         }
 
-        //mVisionInterface = VisionInterface(this, mNode, mTfPublisher, mTimeSync)
+        //mVisionInterface = VisionInterface(this, mNode, mTfPublisher, TimeSync)
 
         /**/
 

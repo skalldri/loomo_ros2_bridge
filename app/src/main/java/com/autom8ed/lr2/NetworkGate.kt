@@ -31,13 +31,13 @@ import java.net.Inet4Address
  *    "published" at 30 fps). The DDS objects cannot be rebuilt in place, so the process restarts and
  *    the new process waits for the network again.
  *
- * All decisions run on the main thread; [onReady] is called there at most once.
+ * All decisions run on the main thread; [onReady] is called there at most once, with the network.
  */
 class NetworkGate(
     private val ctx: Context,
     private val restartExtras: Bundle?,
     private val beforeRestart: () -> Unit,
-    private val onReady: () -> Unit,
+    private val onReady: (Network) -> Unit,
 ) {
     private val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val main = Handler(ctx.mainLooper)
@@ -88,7 +88,7 @@ class NetworkGate(
             }
             rosNetwork = network
             Log.i(TAG, "Ethernet network $network up with $ipv4: starting ROS")
-            onReady()
+            onReady(network)
         } else if (network != current) {
             restart("Ethernet network replaced ($current -> $network)")
         }
