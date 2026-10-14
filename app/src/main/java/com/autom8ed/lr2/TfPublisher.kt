@@ -17,7 +17,6 @@ import org.ros2.rcljava.qos.QoSProfile
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.cos
@@ -151,10 +150,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(loomoFrameToRosFrame(tfData.tgtFrameID))
         transformStamped.header.setFrameId(loomoFrameToRosFrame(tfData.srcFrameID))
 
-        // These values are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(tfData.timeStamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (tfData.timeStamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, tfData.timeStamp, TimeSync.TF_ALGO)
 
         return transformStamped
     }
@@ -189,10 +185,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(tgtFrame) //TfPublisherConstants.REALSENSE_DEPTH_OPTICAL_FRAME_ID)
         transformStamped.header.setFrameId(srcFrame) // TfPublisherConstants.REALSENSE_DEPTH_FRAME_ID)
 
-        // These values are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
 
         return transformStamped
     }
@@ -222,10 +215,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.ULTRASONIC_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        // These values are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
 
         return transformStamped
     }
@@ -254,10 +244,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.IR_LEFT_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        // These values are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
 
         return transformStamped
     }
@@ -286,10 +273,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.IR_RIGHT_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        // These values are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
 
         return transformStamped
     }
@@ -368,11 +352,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.BASE_LINK)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_ODOM)
 
-        // These timestamps are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(baseImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec =
-            (baseImuData.timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, baseImuData.timestamp, TimeSync.BASE_IMU)
 
         return transformStamped
     }
@@ -427,10 +407,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.BASE_ODOM)
         transformStamped.header.setFrameId(TfPublisherConstants.LOOMO_ODOM)
 
-        // These timestamps are in microseconds
-        transformStamped.header.stamp.sec =
-            TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
-        transformStamped.header.stamp.nanosec = (pose2D.timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(transformStamped.header.stamp, pose2D.timestamp, TimeSync.POSE_2D)
 
         return transformStamped
     }
@@ -453,6 +430,11 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     private fun publishTf(ctx: TfNeededContext) {
         // Bail out if we haven't bound to the sensor service yet
         if (!mSensor.isBind) {
+            return
+        }
+        // No Loomo-clock stamps on the wire: wait for the first clock sample (TimeSync).
+        if (!TimeSync.isReady()) {
+            TimeSync.dropUnsynced()
             return
         }
 
@@ -597,10 +579,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
 
         // Intentionally not setting the mOdomMsg.twist.covariance matrix
 
-        // These timestamps are in microseconds
-        odomMsg.header.stamp.sec =
-            TimeUnit.SECONDS.convert(pose2D.timestamp, TimeUnit.MICROSECONDS).toInt();
-        odomMsg.header.stamp.nanosec = (pose2D.timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(odomMsg.header.stamp, pose2D.timestamp, TimeSync.POSE_2D)
 
         mOdometryPublisher.publish(odomMsg)
     }
@@ -625,11 +604,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         jointStateMsg.velocity = DoubleArray(2) { 0.0 }
         jointStateMsg.effort = DoubleArray(2) { 0.0 }
 
-        // These timestamps are in microseconds
-        jointStateMsg.header.stamp.sec =
-            TimeUnit.SECONDS.convert(headImuData.timestamp, TimeUnit.MICROSECONDS).toInt();
-        jointStateMsg.header.stamp.nanosec =
-            (headImuData.timestamp % (1000 * 1000)).toInt() * (1000);
+        TimeSync.toJetson(jointStateMsg.header.stamp, headImuData.timestamp, TimeSync.HEAD_IMU)
 
         mJointStatePublisher.publish(jointStateMsg)
     }

@@ -22,7 +22,6 @@ import java.nio.ByteBuffer
 import java.nio.channels.Channels
 import java.nio.channels.WritableByteChannel
 import java.util.EnumMap
-import java.util.concurrent.TimeUnit
 
 
 val CAMERA_INFO_TOPIC = "camera_info"
@@ -130,8 +129,7 @@ enum class Camera {
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
             // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -191,8 +189,7 @@ enum class Camera {
             msg.d = d
             msg.distortionModel = "plumb_bob"
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -214,8 +211,7 @@ enum class Camera {
 
             // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -260,8 +256,7 @@ enum class Camera {
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
             // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -321,8 +316,7 @@ enum class Camera {
             msg.d = d
             msg.distortionModel = "plumb_bob"
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -366,8 +360,7 @@ enum class Camera {
             msg.step = mStreamInfo!!.width * mStreamInfo!!.pixelBytes.toInt()
 
             // msg.header.stamp = timeSync.getRosTime(frame.timestamp, frame.tid)
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }
@@ -414,8 +407,7 @@ enum class Camera {
 
             msg.distortionModel = "plumb_bob"
 
-            msg.header.stamp.sec = TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt();
-            msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000);
+            TimeSync.toJetson(msg.header.stamp, frame.info.platformTimeStamp)
 
             return true
         }

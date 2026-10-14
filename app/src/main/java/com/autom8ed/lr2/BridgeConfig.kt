@@ -33,6 +33,10 @@ import java.util.Properties
  *  - `stats.periodS`: seconds between StreamStats report lines (default 5).
  *  - `dds.priority`: load the Fast DDS profile (assets/fastdds_profiles.xml) that sends TF,
  *    odometry and joint states ahead of the camera images (default true); see FastDdsProfile.
+ *  - `clock.sync`: stamp messages on the Jetson's clock, measured with SNTP (default true); see
+ *    TimeSync. Off, stamps are the Loomo's own clock, which ran ~652 s ahead of the Jetson's.
+ *  - `clock.server`: the time server to measure against (default 10.0.0.1, the Jetson's
+ *    `loomo-sntp` responder on the Loomo link).
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -47,6 +51,8 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val tagFrameNum = bool("stats.tagFrameNum", true)
     val statsPeriodS = int("stats.periodS", 5, min = 1)
     val ddsPriority = bool("dds.priority", true)
+    val clockSync = bool("clock.sync", true)
+    val clockServer = values["clock.server"]?.trim()?.takeIf { it.isNotEmpty() } ?: "10.0.0.1"
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -80,7 +86,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     fun log() {
         Log.i(TAG, "sources: $sources")
         Log.i(TAG, "streams: $depth $colour $fisheye")
-        Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority")
+        Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority clock.sync=$clockSync clock.server=$clockServer")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -93,7 +99,8 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "depth.enabled", "depth.raw", "depth.h264",
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
-            "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority"
+            "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority",
+            "clock.sync", "clock.server"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {

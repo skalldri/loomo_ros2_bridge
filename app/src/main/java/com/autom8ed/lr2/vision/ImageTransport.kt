@@ -5,6 +5,7 @@ import com.autom8ed.lr2.BridgeConfig
 
 import com.autom8ed.lr2.PerfCounter
 import com.autom8ed.lr2.RosNode
+import com.autom8ed.lr2.TimeSync
 import org.ros2.rcljava.qos.QoSProfile
 import org.ros2.rcljava.qos.policies.Reliability
 
@@ -89,6 +90,7 @@ class ImageTransport(
     private var mH264FramePublisher: H264ImagePublisher? = null
 
     private val TAG = "ImageTransport - $mBaseImageTopic"
+    private val mStampAge = TimeSync.stampAge(stats.name)
     private val mFramePerf: PerfCounter = PerfCounter("ImageTransport - $mBaseImageTopic - frame")
 
     init {
@@ -123,19 +125,25 @@ class ImageTransport(
 
     /** Runs on the stream's FrameWorker thread with a slot copied out of the SDK callback. */
     fun publish(slot: FrameSlot) {
-        val platformTimeStamp = slot.platformTimeStampUs
+        // No Loomo-clock stamps on the wire: wait for the first clock sample (TimeSync).
+        if (!TimeSync.isReady()) {
+            TimeSync.dropUnsynced()
+            return
+        }
+        // The frame's stamp on the Jetson's clock, computed once for all its messages.
+        val stampUs = TimeSync.toJetsonUs(slot.platformTimeStampUs, mStampAge)
         val frameNum = slot.frameNum
 
         mFramePerf.start()
 
         // Always publish the camera info
-        mCameraInfoPublisher.publish(platformTimeStamp, frameNum)
+        mCameraInfoPublisher.publish(stampUs, frameNum)
 
         // The raw image straight from the slot's array: no Bitmap round trip
-        mBaseImagePublisher?.publish(slot, platformTimeStamp, frameNum)
+        mBaseImagePublisher?.publish(slot, stampUs, frameNum)
 
         // Safe access: does not call if NULL
-        mH264FramePublisher?.publish(slot, platformTimeStamp, frameNum)
+        mH264FramePublisher?.publish(slot, stampUs, frameNum)
         mFramePerf.stop()
     }
 }

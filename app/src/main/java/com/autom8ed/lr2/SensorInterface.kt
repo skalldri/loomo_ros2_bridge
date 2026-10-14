@@ -106,6 +106,14 @@ class SensorInterface (ctx: android.content.Context, node: RosNode) {
             return
         }
 
+        // No Loomo-clock stamps on the wire: wait for the first clock sample (TimeSync).
+        if (!TimeSync.isReady()) {
+            TimeSync.dropUnsynced()
+            return
+        }
+
+        // The distance APIs carry no timestamp: stamp with the time of the query.
+        val nowUs = TimeSync.nowLoomoUs()
         val ultrasonicData = mSensor.ultrasonicDistance
         val infraredData = mSensor.infraredDistance
 
@@ -134,8 +142,8 @@ class SensorInterface (ctx: android.content.Context, node: RosNode) {
         // range = allSensors.ultrasonic.range
 
         val ussRangeMsg = sensor_msgs.msg.Range()
+        TimeSync.toJetson(ussRangeMsg.header.stamp, nowUs)
         ussRangeMsg.header.frameId = TfPublisherConstants.ULTRASONIC_FRAME_ID
-        // TODO header.timestamp
         ussRangeMsg.radiationType = sensor_msgs.msg.Range.ULTRASOUND
         ussRangeMsg.fieldOfView = toRadians(mUltrasonicFov).toFloat() // 15 degree cone, TODO: total guess
         ussRangeMsg.minRange = 0.3f // Approximately measure, min value seen from Loomo API ~24cm
@@ -144,8 +152,8 @@ class SensorInterface (ctx: android.content.Context, node: RosNode) {
         mUltrasonicPublisher.publish(ussRangeMsg)
 
         val irLeftRangeMsg = sensor_msgs.msg.Range()
+        TimeSync.toJetson(irLeftRangeMsg.header.stamp, nowUs)
         irLeftRangeMsg.header.frameId = TfPublisherConstants.IR_LEFT_FRAME_ID
-        // TODO header.timestamp
         irLeftRangeMsg.radiationType = sensor_msgs.msg.Range.INFRARED
         irLeftRangeMsg.fieldOfView = toRadians(mIrFov).toFloat() // 30 degree cone, TODO: total guess
         irLeftRangeMsg.minRange = 0.2f // 20cm, TODO: total guess
@@ -154,8 +162,8 @@ class SensorInterface (ctx: android.content.Context, node: RosNode) {
         mIrLeftPublisher.publish(irLeftRangeMsg)
 
         val irRightRangeMsg = sensor_msgs.msg.Range()
+        TimeSync.toJetson(irRightRangeMsg.header.stamp, nowUs)
         irRightRangeMsg.header.frameId = TfPublisherConstants.IR_RIGHT_FRAME_ID
-        // TODO header.timestamp
         irRightRangeMsg.radiationType = sensor_msgs.msg.Range.INFRARED
         irRightRangeMsg.fieldOfView =
             toRadians(mIrFov).toFloat() // 30 degree cone, TODO: total guess

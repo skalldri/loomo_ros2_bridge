@@ -9,6 +9,7 @@ import android.view.Surface
 import com.autom8ed.lr2.AdvancedPublisher
 import com.autom8ed.lr2.PerfCounter
 import com.autom8ed.lr2.RosNode
+import com.autom8ed.lr2.TimeSync
 import org.ros2.rcljava.qos.QoSProfile
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
@@ -63,8 +64,9 @@ class H264ImagePublisher(
     private val mByteBuffer: ByteBuffer = ByteBuffer.allocate(mWidth * mHeight * 4)
     private val kYuv420Size: Int = (mWidth * mHeight * 3) / 2
 
-    // Encoder presentation time (us) -> platform timestamp of the frame that produced it, so the
-    // published header carries the camera's timestamp. With Surface input the presentation time
+    // Encoder presentation time (us) -> timestamp of the frame that produced it, so the
+    // published header carries the camera's timestamp (already on the Jetson's clock: the
+    // "platform" timestamps here come from ImageTransport after TimeSync.toJetsonUs). With Surface input the presentation time
     // is the system clock at unlockCanvasAndPost(), hence nearest-match rather than equality.
     private class PendingStamp(val presentationTimeUs: Long, val platformTimeStampUs: Long, val frameNum: Int)
     private val mPendingStamps = ArrayDeque<PendingStamp>()
@@ -258,7 +260,7 @@ class H264ImagePublisher(
 
     // Platform timestamp of the input frame closest to this output's presentation time; entries
     // up to and including the match are dropped (output is in presentation order). Falls back
-    // to the current platform clock if nothing is pending.
+    // to the current time on the Jetson's clock (like the frame stamps, see TimeSync) if nothing is pending.
     private fun stampFor(presentationTimeUs: Long): PendingStamp {
         synchronized(mPendingStamps) {
             var best: PendingStamp? = null
@@ -268,7 +270,7 @@ class H264ImagePublisher(
                 }
             }
             if (best == null) {
-                return PendingStamp(presentationTimeUs, System.nanoTime() / 1000, -1)
+                return PendingStamp(presentationTimeUs, TimeSync.toJetsonUs(TimeSync.nowLoomoUs()), -1)
             }
             while (mPendingStamps.isNotEmpty()) {
                 val head = mPendingStamps.removeFirst()

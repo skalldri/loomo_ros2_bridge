@@ -59,9 +59,39 @@ adb logcat -s StreamStats:* BridgeConfig:* MessageWarmup:*
 ```
 
 By default `header.stamp.nanosec % 1000` carries the vision service's frame number modulo 1000
-on every image and camera_info message (the platform timestamp is in microseconds, so those
+on every image and camera_info message (the stamp is truncated to the microsecond, so those
 digits are otherwise zero; the stamp is perturbed by under a microsecond). A receiver can check
 for missing frames without any extra topic. Set `stats.tagFrameNum=false` to turn it off.
+
+### Time stamps
+
+Every `header.stamp` is on the **Jetson's clock**, not the Loomo's. The Segway services stamp
+frames, `Pose2D`, IMU and TF data in microseconds of the Loomo's wall clock, which has no internet
+time source and ran ~652 s ahead of the Jetson (and moves at every reboot, when it is re-read
+from the RTC). `TimeSync.kt` queries the SNTP responder on the Jetson's end of the Loomo link
+(`10.0.0.1:123`, loomo_jetson_config's `loomo-sntp` service) once a second, keeps the answer
+with the shortest round trip of the last 16, and adds that offset to every stamp. Neither clock
+is changed: the app cannot set the Loomo's clock without root, and stepping it would disturb the
+vision service, which drops frames whose timestamps do not increase.
+
+- Until the first answer the app publishes **no stamped message** (TF, odometry, joint states,
+  images, camera_info, ranges); listeners that once see a stamp 650 s in the future reject the
+  correct ones afterwards. The watchdog heartbeat and `/cmd_vel` are unaffected. The first answer
+  normally arrives 3-6 ms after ROS starts; without one, `TimeSync` logs an error every 30 s.
+- Measured on 2026-10-13: round trip ~0.6 ms (offset error under 0.3 ms), Loomo crystal drift
+  -17 to -27 ppm against the Jetson (under 0.5 ms across the 16 s window). On the Jetson,
+  receive time minus stamp is 14-60 ms for camera_info, odometry, TF and joint states and
+  ~100 ms for H.264 (it was -652 400 ms), and L2 LIDAR clouds transform into `loomo_odom` at
+  their own stamps.
+- A frame's camera_info, image and H.264 messages share one converted stamp.
+- The sync is not the limit on stamp accuracy; the Segway stamps are. The fisheye's
+  `platformTimeStamp` is the least consistent: right after a start some fisheye frames are only
+  5 ms old when they reach the app (depth and colour: 21-28 ms), and within one session its
+  stamp-to-arrival time shifted by ~35 ms. Once, shortly after a start, a fisheye camera_info
+  arrived on the Jetson 19 ms *before* its stamp; not seen again in four more restarts.
+- `adb logcat -s TimeSync:*` prints a line a minute: offset, round trips, drift, steps of either
+  clock, and how old each SDK stamp source is when converted (all small and positive, which is
+  how the sources were shown to be on the Loomo's wall clock).
 
 ### Configuration
 
@@ -83,6 +113,8 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `queue.depth` | `8` | frames of jitter a worker may fall behind before frames are dropped |
 | `stats.tagFrameNum` | `true` | frame number in the stamp, see above |
 | `stats.periodS` | `5` | seconds between `StreamStats` lines |
+| `clock.sync` | `true` | stamp on the Jetson's clock (see Time stamps); `false` keeps the Loomo's own clock, as before |
+| `clock.server` | `10.0.0.1` | the SNTP server to measure against |
 | `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom` and `/loomo/joint_states` get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation
