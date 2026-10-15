@@ -93,6 +93,40 @@ vision service, which drops frames whose timestamps do not increase.
   clock, and how old each SDK stamp source is when converted (all small and positive, which is
   how the sources were shown to be on the Loomo's wall clock).
 
+### TF, odometry and joint states
+
+The TF capture runs once per depth frame (30 Hz), but the Segway services update Pose2D and the
+base IMU at 20 Hz (50 ms apart, each at its own phase) and the SDK only returns the latest
+snapshot. Each SDK sample is published once, decided by its raw timestamp (`SampleGate.kt`):
+
+| Topic / transform | Rate | Stamp |
+|---|---|---|
+| `/tf` `base_link -> neck_center_body_yaw_frame`, the camera frames and their optical frames | 30 Hz | depth frame |
+| `/tf` `loomo_odom -> base_odom`, `/loomo/odom` | 20 Hz | Pose2D sample |
+| `/tf` `base_odom -> base_link`, ultrasonic and IR mounts | 20 Hz | base IMU sample |
+| `/loomo/joint_states` (`neck_yaw_joint`, `head_pitch_joint`) | 30 Hz | depth frame |
+
+Before, every capture republished the latest snapshot: ~33% of the odometry, `loomo_odom ->
+base_odom` and `base_odom -> base_link` messages repeated the previous sample, and some copies
+differed by a fraction of a millisecond after the clock-offset conversion. The joint states took
+the neck yaw at the depth frame's time but the stamp and the head pitch from the 20 Hz head IMU, so
+~32% repeated a stamp with different content and tf2 dropped robot_state_publisher's head transforms
+for them (`TF_REPEATED_DATA`). Both joints now come from one TF lookup at the depth frame's time;
+the pitch is the joint angle relative to the body (the head IMU's pitch was relative to the world).
+
+The odometry twist is, by default, the Pose2D difference over 0.25 s (`PoseDiffTwist.kt`). The
+SDK's own velocities are low-pass filtered (time constant ~0.45 s): against the L2 LIDAR's gyro on a
+driven circuit the SDK's angular velocity lagged 395 ms (RMS error 0.062 rad/s), the 0.25-0.30 s
+pose difference 160-190 ms (0.049-0.050 rad/s). Shorter windows are worse, because the pose is
+quantised (yaw in 0.0193 rad encoder ticks, position in 4.45 mm steps). The SDK's values are used
+until the window has filled and after a Pose2D gap of more than 0.6 s. A Pose2D stream stamp that
+jumps back by more than a second (the Loomo's clock was set back) restarts both the dedupe and the
+window.
+
+`StreamStats` adds a line with the capture queue, the new and repeated SDK samples and the twist
+fallbacks: `tf queue depth=0 drops=0 pose2d new=... repeat=... base_imu new=... repeat=...
+twist=pose_diff sdk_fallbacks=... joint_state_skips=...`.
+
 ### Configuration
 
 Settings are read once at start-up from `bridge.properties` in the app's external files
@@ -115,6 +149,8 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `stats.periodS` | `5` | seconds between `StreamStats` lines |
 | `clock.sync` | `true` | stamp on the Jetson's clock (see Time stamps); `false` keeps the Loomo's own clock, as before |
 | `clock.server` | `10.0.0.1` | the SNTP server to measure against |
+| `odom.twist` | `pose_diff` | `/loomo/odom` twist from the Pose2D difference over `odom.twist_window_s` (see TF, odometry and joint states); `sdk` publishes the SDK's low-pass filtered velocities, as before |
+| `odom.twist_window_s` | `0.25` | the `pose_diff` window in seconds, 0.05 to 0.5 |
 | `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom` and `/loomo/joint_states` get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation

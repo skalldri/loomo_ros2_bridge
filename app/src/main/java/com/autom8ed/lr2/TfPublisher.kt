@@ -20,20 +20,19 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.cos
+import kotlin.math.roundToLong
 import kotlin.math.sin
 
 
-class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface) {
+class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface, config: BridgeConfig) {
 
     class TfNeededContext(
         timestamp: Long,
         baseImu: SensorData,
-        headImu: SensorData,
         pose2D: SensorData
     ) {
         val mTimestamp: Long = timestamp
         val mBaseImu: SensorData = baseImu
-        val mHeadImu: SensorData = headImu
         val mPose2D: SensorData = pose2D
     }
 
@@ -49,6 +48,16 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     // callback offers and never blocks; the sensor queries run on this class's thread.
     private val mTimestampQueue: BlockingQueue<Long> = ArrayBlockingQueue<Long>(64)
     private val mQueueDrops = AtomicLong()
+
+    // The capture runs per depth frame (30 Hz) but Pose2D and the base IMU are 20 Hz snapshots:
+    // each sample is published once (see SampleGate). Only touched on the tf-publisher thread.
+    private val mPose2DGate = SampleGate()
+    private val mBaseImuGate = SampleGate()
+    // Twist from Pose2D differences (BridgeConfig odom.twist=pose_diff), or null for the SDK's.
+    private val mPoseDiffTwist: PoseDiffTwist? =
+        if (config.odomTwistPoseDiff) PoseDiffTwist(windowUs = (config.odomTwistWindowS * 1e6).roundToLong()) else null
+    @Volatile private var mTwistFallbacks = 0L
+    @Volatile private var mJointStateSkips = 0L
 
     private val TAG: String = "TfPublisher"
 
@@ -77,6 +86,14 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     /** Depth of the pending TF-capture queue and the number of dropped requests, for reporting. */
     fun queueDepth(): Int = mTimestampQueue.size
     fun queueDrops(): Long = mQueueDrops.get()
+
+    /** One line for StatsReporter: capture queue, published and repeated SDK samples, fallbacks. */
+    fun statsLine(): String =
+        "tf queue depth=${queueDepth()} drops=${queueDrops()}" +
+            " pose2d new=${mPose2DGate.passed} repeat=${mPose2DGate.repeats}" +
+            " base_imu new=${mBaseImuGate.passed} repeat=${mBaseImuGate.repeats}" +
+            " twist=${if (mPoseDiffTwist != null) "pose_diff" else "sdk"} sdk_fallbacks=$mTwistFallbacks" +
+            " joint_state_skips=$mJointStateSkips"
 
     /** Requests a TF/odometry capture for a frame taken at [timestampUs]. Never blocks. */
     fun indicateTfNeededAtTime(timestampUs: Long) {
@@ -190,7 +207,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         return transformStamped
     }
 
-    private fun getUltrasonicTransform(timestamp: Long): TransformStamped {
+    private fun getUltrasonicTransform(stamp: builtin_interfaces.msg.Time): TransformStamped {
         val vector3 = Vector3()
 
         // Measured with a ruler...
@@ -215,12 +232,12 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.ULTRASONIC_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
+        copyStamp(transformStamped.header.stamp, stamp)
 
         return transformStamped
     }
 
-    private fun getIrLeftTransform(timestamp: Long): TransformStamped {
+    private fun getIrLeftTransform(stamp: builtin_interfaces.msg.Time): TransformStamped {
         val vector3 = Vector3()
 
         // Measured with calipers relative to the USS
@@ -244,12 +261,12 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.IR_LEFT_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
+        copyStamp(transformStamped.header.stamp, stamp)
 
         return transformStamped
     }
 
-    private fun getIrRightTransform(timestamp: Long): TransformStamped {
+    private fun getIrRightTransform(stamp: builtin_interfaces.msg.Time): TransformStamped {
         val vector3 = Vector3()
 
         // Measured with calipers relative to the USS
@@ -273,9 +290,21 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.IR_RIGHT_FRAME_ID)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_LINK)
 
-        TimeSync.toJetson(transformStamped.header.stamp, timestamp)
+        copyStamp(transformStamped.header.stamp, stamp)
 
         return transformStamped
+    }
+
+    private fun copyStamp(dst: builtin_interfaces.msg.Time, src: builtin_interfaces.msg.Time) {
+        dst.sec = src.sec
+        dst.nanosec = src.nanosec
+    }
+
+    /** [loomoUs] on the Jetson's clock (TimeSync), as a new stamp to copy into each message. */
+    private fun jetsonStamp(loomoUs: Long, age: TimeSync.StampAge): builtin_interfaces.msg.Time {
+        val stamp = builtin_interfaces.msg.Time()
+        TimeSync.toJetson(stamp, loomoUs, age)
+        return stamp
     }
 
     private fun toQuaternion(
@@ -302,7 +331,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         return q;
     }
 
-    private fun getBaseOdomTransform(baseImuData: SensorData): TransformStamped {
+    private fun getBaseOdomTransform(baseImuData: SensorData, stamp: builtin_interfaces.msg.Time): TransformStamped {
         //Log.i(TAG, "Base IMU Sensor: ${mBaseImuData.floatData[0]}, ${mBaseImuData.floatData[1]}, ${mBaseImuData.floatData[2]}")
 
         //val mWorldImuData =
@@ -352,12 +381,12 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.BASE_LINK)
         transformStamped.header.setFrameId(TfPublisherConstants.BASE_ODOM)
 
-        TimeSync.toJetson(transformStamped.header.stamp, baseImuData.timestamp, TimeSync.BASE_IMU)
+        copyStamp(transformStamped.header.stamp, stamp)
 
         return transformStamped
     }
 
-    private fun getLoomoOdomTransform(pose2D: Pose2D): TransformStamped {
+    private fun getLoomoOdomTransform(pose2D: Pose2D, stamp: builtin_interfaces.msg.Time): TransformStamped {
         //Log.i(TAG, "Base IMU Sensor: ${mBaseImuData.floatData[0]}, ${mBaseImuData.floatData[1]}, ${mBaseImuData.floatData[2]}")
 
         //val mWorldImuData =
@@ -407,23 +436,22 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         transformStamped.setChildFrameId(TfPublisherConstants.BASE_ODOM)
         transformStamped.header.setFrameId(TfPublisherConstants.LOOMO_ODOM)
 
-        TimeSync.toJetson(transformStamped.header.stamp, pose2D.timestamp, TimeSync.POSE_2D)
+        copyStamp(transformStamped.header.stamp, stamp)
 
         return transformStamped
     }
 
     // Capture context for an event that occurred at time T
     fun captureTfContext(timestamp: Long): TfNeededContext {
+        // The latest snapshot of each source; querySensorData takes no time argument.
         val sensorData =
-            mSensor.querySensorData(listOf(Sensor.POSE_2D, Sensor.BASE_IMU, Sensor.HEAD_WORLD_IMU))
+            mSensor.querySensorData(listOf(Sensor.POSE_2D, Sensor.BASE_IMU))
         val pose2DData = sensorData[0]
         val baseImuData = sensorData[1]
-        val headImuData = sensorData[2]
 
         // Log.i(TAG, "Base IMU Data: ${baseImuData.floatData[0]},${baseImuData.floatData[1]},${baseImuData.floatData[2]}")
-        // Log.i(TAG, "Head IMU Data: ${headImuData.floatData[0]},${headImuData.floatData[1]},${headImuData.floatData[2]}")
 
-        val ctx: TfNeededContext = TfNeededContext(timestamp, baseImuData, headImuData, pose2DData)
+        val ctx: TfNeededContext = TfNeededContext(timestamp, baseImuData, pose2DData)
         return ctx
     }
 
@@ -489,23 +517,40 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
                 100 /* lookup threshold */
             )
 
+        // neck_yaw_link -> head pitch. Not published on /tf (robot_state_publisher draws the head
+        // from /loomo/joint_states); it gives the joint state its pitch at the same instant as the
+        // neck yaw above. HEAD_POSE_P_FRAME is HEAD_POSE_Y_FRAME moved up 0.104 m without rotation;
+        // HEAD_POSE_P_R_FRAME adds the pitch, a pure rotation about Y (measured 2026-10-14).
+        val T_NeckYawLink_HeadPitch =
+            AlgoTfRequest(
+                Sensor.HEAD_POSE_P_R_FRAME,
+                Sensor.HEAD_POSE_Y_FRAME,
+                ctx.mTimestamp,
+                100 /* lookup threshold */
+            )
+
         val requests: List<AlgoTfRequest> = listOf(
             T_BaseLink_NeckLink,
             T_NeckYawLink_RealsenseDepth,
             T_NeckYawLink_RealsenseColor,
-            T_NeckYawLink_Fisheye
+            T_NeckYawLink_Fisheye,
+            T_NeckYawLink_HeadPitch
         )
         val results = mSensor.getMassiveTfData(requests)
 
-        for (r in results) {
+        // The first four results go on /tf, every depth frame: they are looked up at the frame's
+        // own time, so each capture is a new sample.
+        var neckTf: TransformStamped? = null
+        for ((i, r) in results.withIndex()) {
+            if (i >= 4) break
             //val tfData = mSensor.getTfData(req.tgtFrameID, req.srcFrameID, req.timeStamp, 100)
 
             if (r.err_code == 0) {
-                transforms.add(algoTfDataToTransformStamped(r))
+                val t = algoTfDataToTransformStamped(r)
+                if (i == 0) neckTf = t
+                transforms.add(t)
             }
         }
-
-        val pose2D: Pose2D = mSensor.sensorDataToPose2D(ctx.mPose2D)
 
         if (transforms.size != 0) {
             // Add static / fixup transforms
@@ -530,31 +575,52 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
                     T_NeckYawLink_Fisheye.timeStamp
                 )
             )
-            transforms.add(getUltrasonicTransform(ctx.mBaseImu.timestamp))
-            transforms.add(getIrLeftTransform(ctx.mBaseImu.timestamp))
-            transforms.add(getIrRightTransform(ctx.mBaseImu.timestamp))
+        }
+
+        // Base IMU (20 Hz): platform tilt plus the range sensors' mounts, which are stamped with
+        // it. Only a new sample is published, converted once.
+        if (mBaseImuGate.isNew(ctx.mBaseImu.timestamp)) {
+            val stamp = jetsonStamp(ctx.mBaseImu.timestamp, TimeSync.BASE_IMU)
+            transforms.add(getUltrasonicTransform(stamp))
+            transforms.add(getIrLeftTransform(stamp))
+            transforms.add(getIrRightTransform(stamp))
 
             // Add calculated platform tilt
             // TODO: there's a significant delay between when a camera frame
             // is captured and when we capture this IMU data. Consider creating a dedicated IMU capture
             // thread, and interpolating between samples to get a better estimate of the platform tilt
             // at the time the camera captured
-            transforms.add(getBaseOdomTransform(ctx.mBaseImu))
+            transforms.add(getBaseOdomTransform(ctx.mBaseImu, stamp))
+        }
 
-            transforms.add(getLoomoOdomTransform(pose2D))
+        // Pose2D (20 Hz): loomo_odom -> base_odom and /loomo/odom, once per new sample.
+        val pose2D: Pose2D = mSensor.sensorDataToPose2D(ctx.mPose2D)
+        val poseStamp: builtin_interfaces.msg.Time? =
+            if (mPose2DGate.isNew(pose2D.timestamp)) jetsonStamp(pose2D.timestamp, TimeSync.POSE_2D) else null
+        if (poseStamp != null) {
+            transforms.add(getLoomoOdomTransform(pose2D, poseStamp))
+        }
 
+        if (transforms.size != 0) {
             // Fire off the completed transform message
             val tfMsg: tf2_msgs.msg.TFMessage = tf2_msgs.msg.TFMessage()
             tfMsg.transforms = transforms
             mTfPublisher.publish(tfMsg)
         }
 
-        publishOdometry(pose2D)
+        if (poseStamp != null) {
+            publishOdometry(pose2D, poseStamp)
+        }
 
-        publishJointState(ctx.mHeadImu, results[0])
+        val headPitch = results.getOrNull(4)
+        if (neckTf != null && headPitch != null && headPitch.err_code == 0) {
+            publishJointState(neckTf.header.stamp, results[0], headPitch)
+        } else {
+            mJointStateSkips++
+        }
     }
 
-    private fun publishOdometry(pose2D: Pose2D) {
+    private fun publishOdometry(pose2D: Pose2D, stamp: builtin_interfaces.msg.Time) {
 
         val odomMsg: nav_msgs.msg.Odometry = nav_msgs.msg.Odometry()
         odomMsg.header.frameId = TfPublisherConstants.LOOMO_ODOM
@@ -574,28 +640,54 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
 
         // Intentionally not setting the mOdomMsg.pose.covariance matrix
 
-        odomMsg.twist.twist.linear.x = pose2D.linearVelocity.toDouble()
-        odomMsg.twist.twist.angular.z = pose2D.angularVelocity.toDouble()
+        // Pose2D differences over a window (PoseDiffTwist), or the SDK's filtered velocities while
+        // the window fills, after a stall, or with odom.twist=sdk.
+        val diff = mPoseDiffTwist?.add(
+            pose2D.timestamp, pose2D.x.toDouble(), pose2D.y.toDouble(), pose2D.theta.toDouble()
+        )
+        if (diff != null) {
+            odomMsg.twist.twist.linear.x = diff.linear
+            odomMsg.twist.twist.angular.z = diff.angular
+        } else {
+            if (mPoseDiffTwist != null) mTwistFallbacks++
+            odomMsg.twist.twist.linear.x = pose2D.linearVelocity.toDouble()
+            odomMsg.twist.twist.angular.z = pose2D.angularVelocity.toDouble()
+        }
 
         // Intentionally not setting the mOdomMsg.twist.covariance matrix
 
-        TimeSync.toJetson(odomMsg.header.stamp, pose2D.timestamp, TimeSync.POSE_2D)
+        copyStamp(odomMsg.header.stamp, stamp)
 
         mOdometryPublisher.publish(odomMsg)
     }
 
-    private fun publishJointState(headImuData: SensorData, T_BaseLink_NeckLink: AlgoTfData) {
+    /**
+     * Neck yaw and head pitch from one getMassiveTfData call at the depth frame's time, stamped
+     * with that time ([stamp], already converted for the neck transform): 30 Hz, one stamp per
+     * message. Previously the pitch and the stamp came from the 20 Hz HEAD_WORLD_IMU snapshot while
+     * the yaw was looked up per depth frame, so ~32% of the messages repeated the previous stamp
+     * with a different yaw, and tf2 listeners dropped robot_state_publisher's head transforms for
+     * them (TF_REPEATED_DATA).
+     *
+     * HEAD_WORLD_IMU's pitch is the head's pitch in the world, not the joint angle the URDF wants
+     * (the head hangs from base_link, which the base IMU already tilts). The TF pitch is the joint
+     * angle: parked on 2026-10-14 it read 0.112 rad (nose down) while the SDK's HEAD_JOINT_PITCH
+     * sensor read -0.111 (Segway's sign: positive is up) and HEAD_WORLD_IMU -0.002, so the robot
+     * model's head now sits ~6 degrees lower than before.
+     */
+    private fun publishJointState(
+        stamp: builtin_interfaces.msg.Time,
+        T_BaseLink_NeckLink: AlgoTfData,
+        T_NeckYawLink_HeadPitch: AlgoTfData
+    ) {
         val jointStateMsg: sensor_msgs.msg.JointState = sensor_msgs.msg.JointState()
 
         var positions: DoubleArray = DoubleArray(2)
 
-        // I don't think this comes from real IMU data, I think it's just the
-        // joint state being published as a "fake" IMU
-        // TODO: validate this assumption
         positions[0] =
             T_BaseLink_NeckLink.q.rollRad.toDouble() // Head "Yaw". Segway calls rotation around the Z-axis "Roll"
         positions[1] =
-            (-1.0) * headImuData.floatData[0].toDouble() // Head Pitch. Segway roll info is backwards compared to what ROS expects
+            T_NeckYawLink_HeadPitch.q.yawRad.toDouble() // Head Pitch. Segway calls rotation around the Y-axis "Yaw"
 
         jointStateMsg.name = listOf("neck_yaw_joint", "head_pitch_joint")
         jointStateMsg.position = positions
@@ -604,7 +696,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         jointStateMsg.velocity = DoubleArray(2) { 0.0 }
         jointStateMsg.effort = DoubleArray(2) { 0.0 }
 
-        TimeSync.toJetson(jointStateMsg.header.stamp, headImuData.timestamp, TimeSync.HEAD_IMU)
+        copyStamp(jointStateMsg.header.stamp, stamp)
 
         mJointStatePublisher.publish(jointStateMsg)
     }

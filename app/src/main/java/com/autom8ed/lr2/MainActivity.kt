@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
 
         mSensorInterface = SensorInterface(this, mNode)
 
-        mTfPublisher = TfPublisher(this, mNode, mSensorInterface)
+        mTfPublisher = TfPublisher(this, mNode, mSensorInterface, config)
 
         mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
 
@@ -155,7 +155,7 @@ class MainActivity : ComponentActivity() {
         // Delivery accounting for the camera streams: one logcat line per stream every few
         // seconds under the tag "StreamStats", plus an error line for every dropped or failed frame.
         mStatsReporter = StatsReporter(config.statsPeriodS * 1000L)
-        mStatsReporter.registerExtra { "tf queue depth=${mTfPublisher.queueDepth()} drops=${mTfPublisher.queueDrops()}" }
+        mStatsReporter.registerExtra { mTfPublisher.statsLine() }
         mStatsReporter.start()
 
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
