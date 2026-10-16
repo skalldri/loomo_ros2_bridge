@@ -89,79 +89,9 @@ class RealsenseDepthCamera(vision: Vision) : LoomoCamera(vision, StreamType.DEPT
     private fun populateCameraInfo(): sensor_msgs.msg.CameraInfo {
         val msg: sensor_msgs.msg.CameraInfo = getCameraInfoCore()
 
-        val intrinsic = mColorDepthCalibration.colorIntrinsic
-
-        // Intrinsic camera matrix for the raw (distorted) images.
-        //     [fx  0 cx]
-        // K = [ 0 fy cy]
-        //     [ 0  0  1]
-        // Stored as a flat array of 9 float64 (doubles)
-        // Row-major order
-        val k = DoubleArray(9) { 0.0 }
-        k[0] = intrinsic.focalLength.x.toDouble()
-        k[4] = intrinsic.focalLength.y.toDouble()
-        k[2] = intrinsic.principal.x.toDouble()
-        k[5] = intrinsic.principal.y.toDouble()
-        k[8] = 1.0
-        msg.k = k
-
-        // For depth processing, the P matrix is the most important to publish
-        // Projection/camera matrix
-        //     [fx'  0  cx' Tx]
-        // P = [ 0  fy' cy' Ty]
-        //     [ 0   0   1   0]
-        //
-        // For monocular cameras, Tx = Ty = 0
-        //
-        val p = DoubleArray(12) { 0.0 }
-        // fx'
-        p[0] = intrinsic.focalLength.x.toDouble()
-        // cx'
-        p[2] = intrinsic.principal.x.toDouble()
-        // Tx
-        p[3] = 0.0
-        // fy'
-        p[5] = intrinsic.focalLength.y.toDouble()
-        // cy'
-        p[6] = intrinsic.principal.y.toDouble()
-        // Ty
-        p[7] = 0.0
-        p[10] = 1.0
-        msg.p = p
-
-        val d = DoubleArray(5) { 0.0 }
-
-        // Depth camera has valid distortion coefficients
-        for (i in 0..4) {
-            d[i] = intrinsic.distortion.value[i].toDouble()
-        }
-
-        msg.d = d
-        msg.distortionModel = "plumb_bob"
-
-        /*msg.header.stamp.sec =
-            TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt()
-        msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000)*/
-
-        return msg
-    }
-}
-
-class RealsenseColorCamera(vision: Vision) : LoomoCamera(vision, StreamType.COLOR, ImageType.COLOR, TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID) {
-    private var mColorDepthCalibration: ColorDepthCalibration = mVision.colorDepthCalibrationData
-    private var mCameraInfo: sensor_msgs.msg.CameraInfo
-
-    init {
-        mCameraInfo = populateCameraInfo()
-    }
-
-    override fun getCameraInfo(): sensor_msgs.msg.CameraInfo {
-        return mCameraInfo
-    }
-
-    private fun populateCameraInfo(): sensor_msgs.msg.CameraInfo {
-        val msg: sensor_msgs.msg.CameraInfo = getCameraInfoCore()
-
+        // The depth stream's own intrinsics (320x240). This used colorIntrinsic, the 640x480 colour
+        // calibration, so the depth camera_info said fx 625.6, cx 323.5, cy 239.6 for a 320x240
+        // image, and the colour camera_info carried the depth intrinsics: the two were swapped.
         val intrinsic = mColorDepthCalibration.depthIntrinsic
 
         // Intrinsic camera matrix for the raw (distorted) images.
@@ -204,7 +134,81 @@ class RealsenseColorCamera(vision: Vision) : LoomoCamera(vision, StreamType.COLO
 
         val d = DoubleArray(5) { 0.0 }
 
-        // Depth camera has valid distortion coefficients
+        // The SDK reports distortion coefficients (all zero on our Loomo)
+        for (i in 0..4) {
+            d[i] = intrinsic.distortion.value[i].toDouble()
+        }
+
+        msg.d = d
+        msg.distortionModel = "plumb_bob"
+
+        /*msg.header.stamp.sec =
+            TimeUnit.SECONDS.convert(frame.info.platformTimeStamp, TimeUnit.MICROSECONDS).toInt()
+        msg.header.stamp.nanosec = (frame.info.platformTimeStamp % (1000 * 1000)).toInt() * (1000)*/
+
+        return msg
+    }
+}
+
+class RealsenseColorCamera(vision: Vision) : LoomoCamera(vision, StreamType.COLOR, ImageType.COLOR, TfPublisherConstants.REALSENSE_COLOR_OPTICAL_FRAME_ID) {
+    private var mColorDepthCalibration: ColorDepthCalibration = mVision.colorDepthCalibrationData
+    private var mCameraInfo: sensor_msgs.msg.CameraInfo
+
+    init {
+        mCameraInfo = populateCameraInfo()
+    }
+
+    override fun getCameraInfo(): sensor_msgs.msg.CameraInfo {
+        return mCameraInfo
+    }
+
+    private fun populateCameraInfo(): sensor_msgs.msg.CameraInfo {
+        val msg: sensor_msgs.msg.CameraInfo = getCameraInfoCore()
+
+        // The colour stream's own intrinsics (640x480); see RealsenseDepthCamera.
+        val intrinsic = mColorDepthCalibration.colorIntrinsic
+
+        // Intrinsic camera matrix for the raw (distorted) images.
+        //     [fx  0 cx]
+        // K = [ 0 fy cy]
+        //     [ 0  0  1]
+        // Stored as a flat array of 9 float64 (doubles)
+        // Row-major order
+        val k = DoubleArray(9) { 0.0 }
+        k[0] = intrinsic.focalLength.x.toDouble()
+        k[4] = intrinsic.focalLength.y.toDouble()
+        k[2] = intrinsic.principal.x.toDouble()
+        k[5] = intrinsic.principal.y.toDouble()
+        k[8] = 1.0
+        msg.k = k
+
+        // For depth processing, the P matrix is the most important to publish
+        // Projection/camera matrix
+        //     [fx'  0  cx' Tx]
+        // P = [ 0  fy' cy' Ty]
+        //     [ 0   0   1   0]
+        //
+        // For monocular cameras, Tx = Ty = 0
+        //
+        val p = DoubleArray(12) { 0.0 }
+        // fx'
+        p[0] = intrinsic.focalLength.x.toDouble()
+        // cx'
+        p[2] = intrinsic.principal.x.toDouble()
+        // Tx
+        p[3] = 0.0
+        // fy'
+        p[5] = intrinsic.focalLength.y.toDouble()
+        // cy'
+        p[6] = intrinsic.principal.y.toDouble()
+        // Ty
+        p[7] = 0.0
+        p[10] = 1.0
+        msg.p = p
+
+        val d = DoubleArray(5) { 0.0 }
+
+        // The SDK reports distortion coefficients (all zero on our Loomo)
         for (i in 0..4) {
             d[i] = intrinsic.distortion.value[i].toDouble()
         }
