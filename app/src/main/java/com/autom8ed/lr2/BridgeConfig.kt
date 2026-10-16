@@ -37,6 +37,10 @@ import java.util.Properties
  *    TimeSync. Off, stamps are the Loomo's own clock, which ran ~652 s ahead of the Jetson's.
  *  - `clock.server`: the time server to measure against (default 10.0.0.1, the Jetson's
  *    `loomo-sntp` responder on the Loomo link).
+ *  - `odom.twist`: where /loomo/odom's twist comes from: `pose_diff` (default), the Pose2D
+ *    difference over `odom.twist_window_s`, or `sdk`, the SDK's low-pass filtered velocities;
+ *    see PoseDiffTwist.
+ *  - `odom.twist_window_s`: the pose_diff window in seconds (default 0.25, 0.05..0.5).
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -53,6 +57,8 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val ddsPriority = bool("dds.priority", true)
     val clockSync = bool("clock.sync", true)
     val clockServer = values["clock.server"]?.trim()?.takeIf { it.isNotEmpty() } ?: "10.0.0.1"
+    val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
+    val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -83,10 +89,30 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
         return n
     }
 
+    private fun choice(key: String, allowed: List<String>, default: String): String {
+        val v = values[key]?.trim()?.lowercase() ?: return default
+        if (v !in allowed) {
+            Log.e(TAG, "$key=\"$v\" is not one of $allowed; using $default")
+            return default
+        }
+        return v
+    }
+
+    private fun double(key: String, default: Double, min: Double, max: Double): Double {
+        val v = values[key]?.trim() ?: return default
+        val d = v.toDoubleOrNull()
+        if (d == null || d < min || d > max) {
+            Log.e(TAG, "$key=\"$v\" is not a number in $min..$max; using $default")
+            return default
+        }
+        return d
+    }
+
     fun log() {
         Log.i(TAG, "sources: $sources")
         Log.i(TAG, "streams: $depth $colour $fisheye")
         Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority clock.sync=$clockSync clock.server=$clockServer")
+        Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -100,7 +126,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
             "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority",
-            "clock.sync", "clock.server"
+            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {
