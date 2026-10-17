@@ -56,6 +56,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     // Twist from Pose2D differences (BridgeConfig odom.twist=pose_diff), or null for the SDK's.
     private val mPoseDiffTwist: PoseDiffTwist? =
         if (config.odomTwistPoseDiff) PoseDiffTwist(windowUs = (config.odomTwistWindowS * 1e6).roundToLong()) else null
+    // loomo_odom -> base_odom on /tf (BridgeConfig tf.odom); off when the Jetson's EKF owns odom -> base_odom.
+    private val mPublishOdomTf: Boolean = config.tfOdom
     @Volatile private var mTwistFallbacks = 0L
     @Volatile private var mJointStateSkips = 0L
 
@@ -93,6 +95,7 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
             " pose2d new=${mPose2DGate.passed} repeat=${mPose2DGate.repeats}" +
             " base_imu new=${mBaseImuGate.passed} repeat=${mBaseImuGate.repeats}" +
             " twist=${if (mPoseDiffTwist != null) "pose_diff" else "sdk"} sdk_fallbacks=$mTwistFallbacks" +
+            " odom_tf=$mPublishOdomTf" +
             " joint_state_skips=$mJointStateSkips"
 
     /** Requests a TF/odometry capture for a frame taken at [timestampUs]. Never blocks. */
@@ -593,11 +596,12 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
             transforms.add(getBaseOdomTransform(ctx.mBaseImu, stamp))
         }
 
-        // Pose2D (20 Hz): loomo_odom -> base_odom and /loomo/odom, once per new sample.
+        // Pose2D (20 Hz): loomo_odom -> base_odom (unless tf.odom=false) and /loomo/odom, once per
+        // new sample.
         val pose2D: Pose2D = mSensor.sensorDataToPose2D(ctx.mPose2D)
         val poseStamp: builtin_interfaces.msg.Time? =
             if (mPose2DGate.isNew(pose2D.timestamp)) jetsonStamp(pose2D.timestamp, TimeSync.POSE_2D) else null
-        if (poseStamp != null) {
+        if (poseStamp != null && mPublishOdomTf) {
             transforms.add(getLoomoOdomTransform(pose2D, poseStamp))
         }
 

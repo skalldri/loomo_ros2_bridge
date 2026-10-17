@@ -41,6 +41,10 @@ import java.util.Properties
  *    difference over `odom.twist_window_s`, or `sdk`, the SDK's low-pass filtered velocities;
  *    see PoseDiffTwist.
  *  - `odom.twist_window_s`: the pose_diff window in seconds (default 0.25, 0.05..0.5).
+ *  - `tf.odom`: publish loomo_odom -> base_odom (the Pose2D odometry) on /tf (default true). Set
+ *    it to false once the Jetson's odometry EKF (loomo_ros loomo_launch ekf.py, publish_tf:=true)
+ *    owns odom -> base_odom: a frame can have only one parent. /loomo/odom and the rest of the
+ *    TF (base_odom -> base_link, the head and the sensors) are published either way.
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -59,6 +63,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val clockServer = values["clock.server"]?.trim()?.takeIf { it.isNotEmpty() } ?: "10.0.0.1"
     val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
+    val tfOdom = bool("tf.odom", true)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -112,7 +117,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
         Log.i(TAG, "sources: $sources")
         Log.i(TAG, "streams: $depth $colour $fisheye")
         Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority clock.sync=$clockSync clock.server=$clockServer")
-        Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS")
+        Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS tf.odom=$tfOdom")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -126,7 +131,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
             "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority",
-            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s"
+            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s", "tf.odom"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {
