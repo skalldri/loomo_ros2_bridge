@@ -159,6 +159,7 @@ fun driveDetail(status: DriveGate.Status): String = when {
     status.reason == DriveGate.Reason.HEARTBEAT_LOST -> "Stopped: Jetson heartbeat was lost\nTouch to restart"
     !status.heartbeatOk -> "No Jetson heartbeat: cannot start"
     status.reason == DriveGate.Reason.BUTTON -> "Stopped by the button\nTouch to start"
+    status.reason == DriveGate.Reason.UI_HIDDEN -> "Stopped: the app left the screen\nTouch to start"
     status.reason == DriveGate.Reason.APP_STOPPING -> "The app is stopping"
     else -> "Touch to start"
 }

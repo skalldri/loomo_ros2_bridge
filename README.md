@@ -51,10 +51,14 @@ in large letters. `DriveGate.kt` holds the logic; `DriveGateTest.kt` covers it.
   `/cmd_vel` moves them again. A released teleop stick or a stopped planner ends like this.
 - **No heartbeat for 1.5 s: the app stops driving and stays stopped** (latched). It does not
   resume when the heartbeat returns; only a tap re-arms it. The head light still turns red as before.
+- **The screen leaves the front: the app stops driving at once, latched the same way.** Another app
+  or a system dialog in front, or the screen turned off (the activity pauses), means the button
+  can't be reached. Coming back in front does not re-arm; a tap does.
 - The timeouts are checked every 20 ms and before every `/cmd_vel`, so they act within 20 ms of
   their limit. A zero the base does not take is retried every 20 ms until it does.
 - When the base service binds, and when the app stops or restarts, the app sends a zero.
-- The screen stays on while driving, so the first touch always reaches the button.
+- The screen stays on while driving, so the first touch always reaches the button and a screen
+  timeout cannot stop a drive. The power button still turns it off, and that stops driving.
 
 The SDK does not stop the base by itself: in raw mode `Base.setLinearVelocity` and
 `Base.setAngularVelocity` (basesdk 0.6.1653) each pass one value over binder to Segway's
@@ -75,7 +79,7 @@ timeout (with the last command), heartbeat loss and return. `StreamStats` adds a
 
 ```
 adb logcat -s DriveGate:* StreamStats:I
-drive mode=NOT_DRIVING reason=START_UP heartbeat=ok following=false cmd passed=0 ignored=0 invalid=0 timeouts=0 starts=0 refused=0 stops button=0 heartbeat=0 zero_refused=0
+drive mode=NOT_DRIVING reason=START_UP heartbeat=ok following=false cmd passed=0 ignored=0 invalid=0 timeouts=0 starts=0 refused=0 stops button=0 heartbeat=0 hidden=0 zero_refused=0
 ```
 
 ## Camera streams

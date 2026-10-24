@@ -44,6 +44,7 @@ private class Rig {
                 events.add(event)
             }
         })
+        gate.uiShown() // the activity resumed: the button is on screen
     }
 
     fun advance(ms: Long) {
@@ -319,6 +320,74 @@ class DriveGateTest {
         }
         assertTrue(r.gate.status().driving)
         assertTrue(r.events.none { it is Event.HeartbeatLost })
+    }
+
+    // --- The screen leaving the front (onPause) ---
+
+    @Test
+    fun hidingTheScreenWhileDrivingStopsAtOnceAndZeroes() {
+        val r = Rig()
+        r.startDriving()
+        r.gate.cmdVel(0.3, 0.1)
+        r.gate.uiHidden()
+        assertFalse(r.gate.status().driving)
+        assertEquals(Reason.UI_HIDDEN, r.gate.status().reason)
+        assertEquals(0.0 to 0.0, r.wheels.last)
+        assertEquals(Event.Stopped(Reason.UI_HIDDEN), r.events.last())
+        r.gate.cmdVel(0.3, 0.1)
+        assertEquals(0.0 to 0.0, r.wheels.last)
+    }
+
+    @Test
+    fun theHiddenStopIsLatchedUntilATouchAfterComingBack() {
+        val r = Rig()
+        r.startDriving()
+        r.gate.uiHidden()
+        r.advance(300)
+        r.gate.heartbeat()
+        r.gate.uiShown() // back in front: still not driving
+        r.gate.tick()
+        assertFalse(r.gate.status().driving)
+        assertEquals(Reason.UI_HIDDEN, r.gate.status().reason)
+        r.gate.cmdVel(0.5, 0.0)
+        assertEquals(0.0 to 0.0, r.wheels.last)
+        r.touch() // re-arm
+        assertTrue(r.gate.status().driving)
+        r.gate.cmdVel(0.5, 0.0)
+        assertEquals(0.5 to 0.0, r.wheels.last)
+    }
+
+    @Test
+    fun aTapWhileHiddenIsRefused() {
+        val r = Rig()
+        r.gate.heartbeat()
+        r.gate.uiHidden()
+        r.touch()
+        assertFalse(r.gate.status().driving)
+        assertEquals(Event.StartRefusedHidden, r.events.last())
+    }
+
+    @Test
+    fun noStartBeforeTheScreenIsFirstShown() {
+        val wheels = FakeWheels()
+        val gate = DriveGate(wheels, clockNs = { 0L })
+        gate.heartbeat()
+        gate.touchDown()
+        gate.tap()
+        assertFalse(gate.status().driving)
+        gate.uiShown()
+        gate.touchDown()
+        gate.tap()
+        assertTrue(gate.status().driving)
+    }
+
+    @Test
+    fun hidingWhileNotDrivingKeepsTheReasonAndSendsNothing() {
+        val r = Rig()
+        r.gate.heartbeat()
+        r.gate.uiHidden()
+        assertEquals(Reason.START_UP, r.gate.status().reason)
+        assertTrue(r.wheels.sent.isEmpty())
     }
 
     // --- The wheels ---

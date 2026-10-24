@@ -14,7 +14,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  *     lost link. Driving stays on, and the next `/cmd_vel` moves the wheels again;
  *   - when no heartbeat (`/loomo/jetson_watchdog`, sent at 2 Hz) has arrived for
  *     [heartbeatTimeoutNs] (1.5 s). The gate drops to NOT_DRIVING and stays there (latched) until
- *     the button is tapped again, even if the heartbeat comes back.
+ *     the button is tapped again, even if the heartbeat comes back;
+ *   - when the screen is no longer in front ([uiHidden]: another app or a system dialog, or the
+ *     screen turned off), since the button can then not be reached. Latched the same way: coming
+ *     back in front ([uiShown]) does not re-arm; a tap does. A tap cannot start while hidden.
  * - NOT_DRIVING only ever sends zeros. The base stays in raw mode and keeps balancing at zero
  *   speed; nothing here changes its control mode or turns balancing off.
  *
@@ -40,7 +43,7 @@ class DriveGate(
     enum class Mode { NOT_DRIVING, DRIVING }
 
     /** Why the gate is NOT_DRIVING. */
-    enum class Reason { START_UP, BUTTON, HEARTBEAT_LOST, APP_STOPPING }
+    enum class Reason { START_UP, BUTTON, HEARTBEAT_LOST, UI_HIDDEN, APP_STOPPING }
 
     data class Status(
         val mode: Mode,
@@ -59,6 +62,8 @@ class DriveGate(
         data object Started : Event()
         /** A tap while the heartbeat was missing; [heartbeatAgeNs] is null if none ever came. */
         data class StartRefused(val heartbeatAgeNs: Long?) : Event()
+        /** A tap while the screen was not in front (it cannot normally reach the gate then). */
+        data object StartRefusedHidden : Event()
         data class Stopped(val reason: Reason) : Event()
         /** No `/cmd_vel` for [ageNs]; the wheels were set to zero from [linear], [angular]. */
         data class CmdTimeout(val ageNs: Long, val linear: Double, val angular: Double) : Event()
@@ -89,6 +94,8 @@ class DriveGate(
     private var following = false
     private var zeroPending = false
     private var pressStopped = false
+    // The screen is in front, so the button can be reached. False until the app first shows it.
+    private var uiVisible = false
     private var notified: Status? = null
 
     // Counters for the stats line.
@@ -99,6 +106,7 @@ class DriveGate(
     private var starts = 0L
     private var startsRefused = 0L
     private var heartbeatStops = 0L
+    private var hiddenStops = 0L
     private var buttonStops = 0L
     private var zeroRefusals = 0L
 
@@ -109,8 +117,10 @@ class DriveGate(
     @Synchronized
     fun addListener(listener: Listener) {
         listeners.add(listener)
+        val s = status()
+        notified = s // every listener has it now: the next notification is the next change
         try {
-            listener.onStatus(status())
+            listener.onStatus(s)
         } catch (t: Throwable) {
             // A listener must not break the gate.
         }
@@ -139,7 +149,10 @@ class DriveGate(
         if (pressStopped) {
             pressStopped = false
         } else if (mode != Mode.DRIVING) {
-            if (heartbeatOk) {
+            if (!uiVisible) {
+                startsRefused++
+                emit(Event.StartRefusedHidden)
+            } else if (heartbeatOk) {
                 mode = Mode.DRIVING
                 reason = null
                 following = false
@@ -201,6 +214,29 @@ class DriveGate(
         notifyStatus()
     }
 
+    /**
+     * The screen left the front (the activity paused: another app or a system dialog in front, or
+     * the screen off). Stops driving at once, latched until a tap after [uiShown].
+     */
+    @Synchronized
+    fun uiHidden() {
+        evaluate(clockNs())
+        uiVisible = false
+        if (mode == Mode.DRIVING) {
+            hiddenStops++
+            stop(Reason.UI_HIDDEN)
+        }
+        notifyStatus()
+    }
+
+    /** The screen is in front again (the activity resumed). Never starts driving. */
+    @Synchronized
+    fun uiShown() {
+        evaluate(clockNs())
+        uiVisible = true
+        notifyStatus()
+    }
+
     /** The base service (re)bound. Unless driving, send it a zero in case it still moves. */
     @Synchronized
     fun baseBound() {
@@ -221,7 +257,8 @@ class DriveGate(
         "drive mode=$mode reason=${reason ?: "-"} heartbeat=${if (heartbeatOk) "ok" else "missing"}" +
             " following=$following cmd passed=$cmdPassed ignored=$cmdIgnored invalid=$cmdInvalid" +
             " timeouts=$cmdTimeouts starts=$starts refused=$startsRefused" +
-            " stops button=$buttonStops heartbeat=$heartbeatStops zero_refused=$zeroRefusals"
+            " stops button=$buttonStops heartbeat=$heartbeatStops hidden=$hiddenStops" +
+            " zero_refused=$zeroRefusals"
 
     private fun evaluate(now: Long) {
         val hbAge = lastHeartbeatNs?.let { now - it }

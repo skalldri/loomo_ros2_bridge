@@ -183,6 +183,8 @@ class MainActivity : ComponentActivity() {
             is DriveGate.Event.Started -> Log.w(DRIVE_TAG, "DRIVING: /cmd_vel now reaches the wheels (button)")
             is DriveGate.Event.StartRefused ->
                 Log.w(DRIVE_TAG, "start refused: no Jetson heartbeat (last: ${ms(event.heartbeatAgeNs)})")
+            is DriveGate.Event.StartRefusedHidden ->
+                Log.w(DRIVE_TAG, "start refused: the screen is not in front")
             is DriveGate.Event.Stopped -> Log.w(DRIVE_TAG, "NOT DRIVING (${event.reason}): wheels set to zero")
             is DriveGate.Event.CmdTimeout -> Log.w(
                 DRIVE_TAG, "/cmd_vel timeout: none for ${ms(event.ageNs)}; wheels set to zero " +
@@ -281,6 +283,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // The button can be reached again; driving stays off until it is tapped.
+        if (this::mDriveGate.isInitialized) mDriveGate.uiShown()
         /*
         timer = Timer()
         timer!!.schedule(object : TimerTask() {
@@ -294,6 +298,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        // Another app, a system dialog or the screen turning off: the button can no longer be
+        // reached, so stop driving (latched). While driving the screen is kept on, so it cannot
+        // time out into this; the power button still can, and stops.
+        if (this::mDriveGate.isInitialized) mDriveGate.uiHidden()
         timer?.cancel()
     }
 
