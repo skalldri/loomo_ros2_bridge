@@ -13,6 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.autom8ed.lr2.ui.theme.LoomoROS2BridgeTheme
+import android.util.Log
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -160,7 +162,8 @@ class MainActivity : ComponentActivity() {
 
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
 
-        GlobalScope.launch {
+        // A camera failure must not take the app down with it (and the drive gate with it).
+        GlobalScope.launch(CoroutineExceptionHandler { _, e -> Log.e(TAG, "camera start failed", e) }) {
             mCameraInterface.start()
         }
 
