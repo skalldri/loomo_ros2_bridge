@@ -100,10 +100,12 @@ class NetworkGate(
             ?.map { it.toString() }
             ?: emptyList()
 
-    private fun restart(reason: String) {
+    /** Restarts the app: [beforeRestart], then an alarm relaunches MainActivity and this process exits.
+     *  Also used by MainActivity when Segway's SDK has unbound its services in the background. */
+    fun restart(reason: String) {
         if (restarting) return
         restarting = true
-        Log.e(TAG, "$reason: restarting the app so DDS gets sockets on the current network")
+        Log.e(TAG, "$reason: restarting the app")
         try {
             beforeRestart()
         } catch (t: Throwable) {
