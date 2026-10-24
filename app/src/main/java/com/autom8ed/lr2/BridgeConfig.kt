@@ -32,7 +32,8 @@ import java.util.Properties
  *    so the receiver can check for gaps (default true); see FrameStamp.
  *  - `stats.periodS`: seconds between StreamStats report lines (default 5).
  *  - `dds.priority`: load the Fast DDS profile (assets/fastdds_profiles.xml) that sends TF,
- *    odometry and joint states ahead of the camera images (default true); see FastDdsProfile.
+ *    odometry, joint states and the head topics ahead of the camera images (default true); see
+ *    FastDdsProfile.
  *  - `clock.sync`: stamp messages on the Jetson's clock, measured with SNTP (default true); see
  *    TimeSync. Off, stamps are the Loomo's own clock, which ran ~652 s ahead of the Jetson's.
  *  - `clock.server`: the time server to measure against (default 10.0.0.1, the Jetson's
@@ -46,6 +47,9 @@ import java.util.Properties
  *    fuses /loomo/odom. Set it to true when nothing else publishes that transform. /loomo/odom
  *    and the rest of the TF (base_odom -> base_link, the head and the sensors) are published
  *    either way.
+ *  - `head.imu`: publish the head's attitude in the world (/loomo/head/world_imu) and its roll
+ *    joint (/loomo/head/joint_roll), read from the head's own sensors (default true); see
+ *    HeadImuPublisher.
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -65,6 +69,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
     val tfOdom = bool("tf.odom", false)
+    val headImu = bool("head.imu", true)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -118,7 +123,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
         Log.i(TAG, "sources: $sources")
         Log.i(TAG, "streams: $depth $colour $fisheye")
         Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority clock.sync=$clockSync clock.server=$clockServer")
-        Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS tf.odom=$tfOdom")
+        Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS tf.odom=$tfOdom head.imu=$headImu")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -132,7 +137,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
             "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority",
-            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s", "tf.odom"
+            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s", "tf.odom", "head.imu"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {

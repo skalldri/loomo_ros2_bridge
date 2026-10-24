@@ -8,10 +8,11 @@
   samples queued behind them: /loomo/odom delivered 0 msg/s and TF ~1/s while the images flowed
   (loomo_ros2_bridge#17, measured 2026-10-07).
 
-  Here those three topics get their own flow controller, which has its own sender thread. Sender
-  threads only share the participant's send lock, taken per datagram, so a small sample waits for
-  at most about one 64 KB image datagram instead of every queued image. The image writers keep the
-  built-in controller and are unchanged. No priorities or bandwidth limits: a priority scheduler
+  Here those three topics, and the head's attitude and roll joint, get their own flow controller,
+  which has its own sender thread. Sender threads only share the participant's send lock, taken
+  per datagram, so a small sample waits for at most about one 64 KB image datagram instead of
+  every queued image. The image writers keep the built-in controller and are unchanged. No
+  priorities or bandwidth limits: a priority scheduler
   only orders whole samples (a small one would still wait for a whole 307 KB image), and a
   bandwidth limit caps throughput.
 
@@ -51,6 +52,24 @@
     </data_writer>
 
     <data_writer profile_name="/loomo/joint_states">
+      <qos>
+        <publishMode>
+          <kind>ASYNCHRONOUS</kind>
+          <flow_controller_name>small_topics</flow_controller_name>
+        </publishMode>
+      </qos>
+    </data_writer>
+
+    <data_writer profile_name="/loomo/head/world_imu">
+      <qos>
+        <publishMode>
+          <kind>ASYNCHRONOUS</kind>
+          <flow_controller_name>small_topics</flow_controller_name>
+        </publishMode>
+      </qos>
+    </data_writer>
+
+    <data_writer profile_name="/loomo/head/joint_roll">
       <qos>
         <publishMode>
           <kind>ASYNCHRONOUS</kind>
