@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import com.autom8ed.lr2.ui.theme.LoomoROS2BridgeTheme
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.ros2.android.activity.ROSActivity
@@ -49,6 +51,9 @@ class MainActivity : ComponentActivity() {
     private var mDriveTicker: ScheduledExecutorService? = null
     // Set once ROS is up; read by the ticker thread.
     @Volatile private var mDriveStatePublisher: LocomotionPlatformInterface? = null
+
+    // The Ethernet link's speed as the Jetson reports it; the screen warns while it is slow.
+    private val mJetsonLink = JetsonLink()
 
     private lateinit var mNode: RosNode
 
@@ -122,11 +127,19 @@ class MainActivity : ComponentActivity() {
             LoomoROS2BridgeTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val status by mDriveStatus.collectAsState()
+                    // Polled, so the banner also goes away when the reports stop.
+                    val linkWarning by produceState<String?>(null) {
+                        while (true) {
+                            value = mJetsonLink.warning(System.nanoTime())
+                            delay(LINK_POLL_MS)
+                        }
+                    }
                     DriveScreen(
                         status = status,
                         onTouchDown = { mDriveGate.touchDown() },
                         onTap = { mDriveGate.tap() },
-                        modifier = Modifier.padding(innerPadding)
+                        modifier = Modifier.padding(innerPadding),
+                        linkWarning = linkWarning,
                     )
                 }
             }
@@ -239,6 +252,7 @@ class MainActivity : ComponentActivity() {
         mStatsReporter = StatsReporter(config.statsPeriodS * 1000L)
         mStatsReporter.registerExtra { mTfPublisher.statsLine() }
         mStatsReporter.registerExtra { mDriveGate.statsLine() }
+        mStatsReporter.registerExtra { mJetsonLink.statsLine(System.nanoTime()) }
         mStatsReporter.start()
 
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
@@ -259,6 +273,18 @@ class MainActivity : ComponentActivity() {
         */
 
         mWatchdog = Watchdog(this, mNode, mHeadInterface) { mDriveGate.heartbeat() }
+
+        // The Jetson reads the link's speed (the Loomo cannot) and sends it every second.
+        mNode.node.createSubscription(std_msgs.msg.UInt16::class.java, JetsonLink.TOPIC) { msg ->
+            val mbps = JetsonLink.mbpsOf(msg.data)
+            if (mJetsonLink.onReport(mbps, System.nanoTime())) {
+                if (mbps in 1 until mJetsonLink.fullMbps) {
+                    Log.w(LINK_TAG, "Ethernet to the Jetson at $mbps Mb/s, below ${mJetsonLink.fullMbps}: showing the warning")
+                } else {
+                    Log.i(LINK_TAG, "Ethernet to the Jetson: ${if (mbps == 0) "no carrier" else "$mbps Mb/s"} (Jetson's report)")
+                }
+            }
+        }
 
         // Should not block since we are using multithreading
         // should also run as fast as possible, always executing new work as it arrives
@@ -338,3 +364,5 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val DRIVE_TAG = "DriveGate"
+private const val LINK_TAG = "JetsonLink"
+private const val LINK_POLL_MS = 500L

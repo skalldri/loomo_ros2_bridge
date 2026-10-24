@@ -82,6 +82,28 @@ adb logcat -s DriveGate:* StreamStats:I
 drive mode=NOT_DRIVING reason=START_UP heartbeat=ok following=false cmd passed=0 ignored=0 invalid=0 timeouts=0 starts=0 refused=0 stops button=0 heartbeat=0 hidden=0 zero_refused=0
 ```
 
+### Slow Ethernet warning
+
+The Ethernet link between the Loomo and the Jetson sometimes comes up at 100 Mb/s instead of
+1000. The camera streams (~14 MB/s) do not fit, so frames drop; reseating the cable fixes it. The
+Loomo cannot read its own link speed (its USB adapter runs under `cdc_ether`, which gives EINVAL
+for `/sys/class/net/eth0/speed`), so the Jetson reports it:
+
+| Topic | Type | QoS | Meaning |
+|---|---|---|---|
+| `/loomo/jetson_link` | `std_msgs/UInt16` | reliable, volatile | The link speed in Mb/s as the Jetson reads it, 0 without carrier. Sent every second. The app subscribes. |
+
+While the reported speed is above 0 and below 1000 Mb/s, the screen shows an orange banner across
+the top: "Ethernet to the Jetson at 100 Mb/s: camera frames will drop. Reseat the cable at both
+ends." The banner goes away at 1000 Mb/s, and also when no report has arrived for more than 5 s:
+the speed is then unknown, and an old value must not raise or keep a warning. The banner does not
+change what the button does. `JetsonLink.kt` holds the logic; `JetsonLinkTest.kt` covers it.
+Logcat tag `JetsonLink` logs each change of the reported speed, and `StreamStats` adds a line:
+
+```
+jetson_link state=FULL last=1000 Mb/s age=420 ms
+```
+
 ## Camera streams
 
 The app publishes the RealSense depth and colour cameras and the fisheye camera at 30 fps on
