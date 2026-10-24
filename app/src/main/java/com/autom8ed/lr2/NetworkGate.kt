@@ -1,5 +1,6 @@
 package com.autom8ed.lr2
 
+import android.app.Activity
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
@@ -100,10 +101,12 @@ class NetworkGate(
             ?.map { it.toString() }
             ?: emptyList()
 
-    private fun restart(reason: String) {
+    /** Restarts the app: [beforeRestart], then an alarm relaunches MainActivity and this process exits.
+     *  Also used by MainActivity when Segway's SDK has unbound its services in the background. */
+    fun restart(reason: String) {
         if (restarting) return
         restarting = true
-        Log.e(TAG, "$reason: restarting the app so DDS gets sockets on the current network")
+        Log.e(TAG, "$reason: restarting the app")
         try {
             beforeRestart()
         } catch (t: Throwable) {
@@ -115,11 +118,16 @@ class NetworkGate(
         val pending = PendingIntent.getActivity(ctx, 0, intent, PendingIntent.FLAG_CANCEL_CURRENT)
         val alarms = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         alarms.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + RESTART_DELAY_MS, pending)
+        // Finish the activity first. An activity that has saved its state (it went to the
+        // background) and is killed while resuming is restarted by Android at once in a new
+        // process; the alarm then adds a second MainActivity to that process, and both run ROS.
+        (ctx as? Activity)?.finishAndRemoveTask()
         Process.killProcess(Process.myPid())
     }
 
     companion object {
         const val TAG = "NetworkGate"
+        // Android 5.1 delays alarms by at least 5 s, so the relaunch comes about 5 s later.
         private const val RESTART_DELAY_MS = 1500L
     }
 }
