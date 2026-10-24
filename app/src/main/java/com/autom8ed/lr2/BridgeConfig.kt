@@ -41,10 +41,11 @@ import java.util.Properties
  *    difference over `odom.twist_window_s`, or `sdk`, the SDK's low-pass filtered velocities;
  *    see PoseDiffTwist.
  *  - `odom.twist_window_s`: the pose_diff window in seconds (default 0.25, 0.05..0.5).
- *  - `tf.odom`: publish loomo_odom -> base_odom (the Pose2D odometry) on /tf (default true). Set
- *    it to false once the Jetson's odometry EKF (loomo_ros loomo_launch ekf.py, publish_tf:=true)
- *    owns odom -> base_odom: a frame can have only one parent. /loomo/odom and the rest of the
- *    TF (base_odom -> base_link, the head and the sensors) are published either way.
+ *  - `tf.odom`: publish loomo_odom -> base_odom (the Pose2D odometry) on /tf (default false). Off,
+ *    an odometry filter on the ROS side owns base_odom's parent (a frame can have only one) and
+ *    fuses /loomo/odom. Set it to true when nothing else publishes that transform. /loomo/odom
+ *    and the rest of the TF (base_odom -> base_link, the head and the sensors) are published
+ *    either way.
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -63,7 +64,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val clockServer = values["clock.server"]?.trim()?.takeIf { it.isNotEmpty() } ?: "10.0.0.1"
     val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
-    val tfOdom = bool("tf.odom", true)
+    val tfOdom = bool("tf.odom", false)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,

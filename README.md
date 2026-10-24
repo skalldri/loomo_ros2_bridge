@@ -142,16 +142,27 @@ vision service, which drops frames whose timestamps do not increase.
 
 ### TF, odometry and joint states
 
-The TF capture runs once per depth frame (30 Hz), but the Segway services update Pose2D and the
-base IMU at 20 Hz (50 ms apart, each at its own phase) and the SDK only returns the latest
-snapshot. Each SDK sample is published once, decided by its raw timestamp (`SampleGate.kt`):
+One thread (`tf-publisher`) does two jobs. Per depth frame (30 Hz) it looks up the head and
+camera transforms and the joint states at the frame's time. On its own 20 Hz timer it reads Pose2D
+and the base IMU, which the Segway services update at 20 Hz (50 ms apart, each at its own phase;
+the SDK only returns the latest snapshot). So the odometry and the tilt keep coming when the depth
+stream stalls or is disabled; before, they were read per depth frame and stopped with it. Each SDK
+sample is published once, decided by its raw timestamp (`SampleGate.kt`):
 
-| Topic / transform | Rate | Stamp |
-|---|---|---|
-| `/tf` `base_link -> neck_center_body_yaw_frame`, the camera frames and their optical frames | 30 Hz | depth frame |
-| `/tf` `loomo_odom -> base_odom`, `/loomo/odom` | 20 Hz | Pose2D sample |
-| `/tf` `base_odom -> base_link`, ultrasonic and IR mounts | 20 Hz | base IMU sample |
-| `/loomo/joint_states` (`neck_yaw_joint`, `head_pitch_joint`) | 30 Hz | depth frame |
+| Topic / transform | Rate | Stamp | Driven by |
+|---|---|---|---|
+| `/tf` `base_link -> neck_center_body_yaw_frame`, the camera frames and their optical frames | 30 Hz | depth frame | depth frame |
+| `/tf` `loomo_odom -> base_odom` (only with `tf.odom=true`), `/loomo/odom` | 20 Hz | Pose2D sample | 20 Hz timer |
+| `/tf` `base_odom -> base_link`, ultrasonic and IR mounts | 20 Hz | base IMU sample | 20 Hz timer |
+| `/loomo/joint_states` (`neck_yaw_joint`, `head_pitch_joint`) | 30 Hz | depth frame | depth frame |
+
+`base_odom -> base_link` is the base's pitch and roll. Segway's locomotion service converts the
+base controller's angles, counted in 0.01 degree, with `raw * PI / 32767`. BASE_IMU therefore
+reports 18000/32767 = 0.549 times the true angles, and its roll has the opposite sign to ROS roll.
+The app publishes pitch = `floatData[0] * 32767/18000` and roll = `-floatData[1] * 32767/18000`
+(`BaseTilt.kt`). Before, `base_link` leaned about half as far as the body: on one Loomo
+(2026-10-23) the reported pitch was 0.525 times and the roll -0.520 times the tilt of gravity
+measured by a separate IMU.
 
 Before, every capture republished the latest snapshot: ~33% of the odometry, `loomo_odom ->
 base_odom` and `base_odom -> base_link` messages repeated the previous sample, and some copies
@@ -170,9 +181,11 @@ until the window has filled and after a Pose2D gap of more than 0.6 s. A Pose2D 
 jumps back by more than a second (the Loomo's clock was set back) restarts both the dedupe and the
 window.
 
-`StreamStats` adds a line with the capture queue, the new and repeated SDK samples and the twist
-fallbacks: `tf queue depth=0 drops=0 pose2d new=... repeat=... base_imu new=... repeat=...
-twist=pose_diff sdk_fallbacks=... joint_state_skips=...`.
+`StreamStats` adds a line with the capture queue, the new and repeated SDK samples, the twist
+fallbacks and the 20 Hz timer's ticks: `tf queue depth=0 drops=0 pose2d new=... repeat=...
+base_imu new=... repeat=... twist=pose_diff sdk_fallbacks=... odom_tf=false base_ticks=...
+skipped=... joint_state_skips=...`. With the timer at the sources' rate, `pose2d new` should grow
+by about 100 every 5 s; `skipped` counts timer ticks lost to a stalled thread.
 
 ### Configuration
 
@@ -198,6 +211,7 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `clock.server` | `10.0.0.1` | the SNTP server to measure against |
 | `odom.twist` | `pose_diff` | `/loomo/odom` twist from the Pose2D difference over `odom.twist_window_s` (see TF, odometry and joint states); `sdk` publishes the SDK's low-pass filtered velocities, as before |
 | `odom.twist_window_s` | `0.25` | the `pose_diff` window in seconds, 0.05 to 0.5 |
+| `tf.odom` | `false` | publish `loomo_odom -> base_odom` (the Pose2D odometry) on `/tf`. Off by default: an odometry filter on the ROS side fuses `/loomo/odom` and owns `base_odom`'s parent (a frame has only one). Set `true` when nothing else publishes it |
 | `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom` and `/loomo/joint_states` get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation
