@@ -100,6 +100,8 @@ object TimeSync {
     val POSE_2D = stampAge("pose2d")
     val BASE_IMU = stampAge("base_imu")
     val TF_ALGO = stampAge("tf")
+    val HEAD_IMU = stampAge("head_imu")
+    val HEAD_JOINT_ROLL = stampAge("head_roll")
 
     /** True once stamps can be converted; publishers drop stamped messages before that. */
     fun isReady(): Boolean = ready

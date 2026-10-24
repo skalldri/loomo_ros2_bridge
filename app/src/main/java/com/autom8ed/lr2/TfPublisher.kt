@@ -32,7 +32,8 @@ import kotlin.math.sin
  *  - on its own 20 Hz timer, whatever the cameras do: Pose2D (/loomo/odom and, with tf.odom,
  *    loomo_odom -> base_odom) and the base IMU's tilt (base_odom -> base_link and the range
  *    sensors' mounts). These used to be captured per depth frame, so a stalled depth stream
- *    stopped the odometry and the tilt too.
+ *    stopped the odometry and the tilt too. With head.imu, the same timer also publishes the
+ *    head's attitude in the world and its roll joint (HeadImuPublisher).
  */
 class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface, config: BridgeConfig) {
 
@@ -61,6 +62,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     // loomo_odom -> base_odom on /tf (BridgeConfig tf.odom, off by default: an odometry filter on
     // the ROS side owns base_odom's parent).
     private val mPublishOdomTf: Boolean = config.tfOdom
+    // The head's own attitude and roll joint (BridgeConfig head.imu), or null when off.
+    private val mHeadImu: HeadImuPublisher? = if (config.headImu) HeadImuPublisher(node) else null
     @Volatile private var mTwistFallbacks = 0L
     @Volatile private var mJointStateSkips = 0L
 
@@ -100,7 +103,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
             " twist=${if (mPoseDiffTwist != null) "pose_diff" else "sdk"} sdk_fallbacks=$mTwistFallbacks" +
             " odom_tf=$mPublishOdomTf" +
             " base_ticks=$mBaseTicks skipped=$mBaseTicksSkipped" +
-            " joint_state_skips=$mJointStateSkips"
+            " joint_state_skips=$mJointStateSkips" +
+            " " + (mHeadImu?.statsLine() ?: "head_imu=off")
 
     /** Requests a TF/odometry capture for a frame taken at [timestampUs]. Never blocks. */
     fun indicateTfNeededAtTime(timestampUs: Long) {
@@ -140,6 +144,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
                     } catch (t: Throwable) {
                         Log.e(TAG, "Pose2D/base IMU capture/publish failed", t)
                     }
+                    // After the base, in a query of its own: it catches and counts its failures.
+                    mHeadImu?.publish(mSensor)
                 }
             }
         }

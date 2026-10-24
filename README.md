@@ -155,6 +155,7 @@ sample is published once, decided by its raw timestamp (`SampleGate.kt`):
 | `/tf` `loomo_odom -> base_odom` (only with `tf.odom=true`), `/loomo/odom` | 20 Hz | Pose2D sample | 20 Hz timer |
 | `/tf` `base_odom -> base_link`, ultrasonic and IR mounts | 20 Hz | base IMU sample | 20 Hz timer |
 | `/loomo/joint_states` (`neck_yaw_joint`, `head_pitch_joint`) | 30 Hz | depth frame | depth frame |
+| `/loomo/head/world_imu`, `/loomo/head/joint_roll` (only with `head.imu=true`, the default; see Head attitude) | 20 Hz | head sample | 20 Hz timer |
 
 `base_odom -> base_link` is the base's pitch and roll. Segway's locomotion service converts the
 base controller's angles, counted in 0.01 degree, with `raw * PI / 32767`. BASE_IMU therefore
@@ -184,8 +185,35 @@ window.
 `StreamStats` adds a line with the capture queue, the new and repeated SDK samples, the twist
 fallbacks and the 20 Hz timer's ticks: `tf queue depth=0 drops=0 pose2d new=... repeat=...
 base_imu new=... repeat=... twist=pose_diff sdk_fallbacks=... odom_tf=false base_ticks=...
-skipped=... joint_state_skips=...`. With the timer at the sources' rate, `pose2d new` should grow
-by about 100 every 5 s; `skipped` counts timer ticks lost to a stalled thread.
+skipped=... joint_state_skips=... head_imu new=... repeat=... head_roll new=... repeat=...
+head_fail=...`. With the timer at the sources' rate, `pose2d new` should grow by about 100 every 5 s;
+`skipped` counts timer ticks lost to a stalled thread; `head_fail` counts failed head queries or
+publishes.
+
+### Head attitude
+
+The head has its own IMU. On the same 20 Hz timer the app reads two of the head's sensors and
+publishes them. It only reads them: nothing here commands the head.
+
+| Topic | Type | Content |
+|---|---|---|
+| `/loomo/head/world_imu` | `sensor_msgs/Imu`, frame `head_pitch_link` | `HEAD_WORLD_IMU`: the head's attitude in the world, as the orientation only. Angular velocity and linear acceleration are not provided (covariance element 0 is -1); the orientation covariance is unknown (all zeros) |
+| `/loomo/head/joint_roll` | `sensor_msgs/JointState`, one joint `head_roll_joint` | `HEAD_JOINT_ROLL`: the head's roll joint. The URDF has no such joint, so it is not in `/loomo/joint_states`; a `JointState` rather than a `std_msgs/Float64` so the sample keeps its stamp |
+
+Each sample is published once, stamped with its own SDK time on the Jetson's clock. The head's
+angles need no scale correction: Segway's service converts them at 182 counts per degree, which is
+how the head encodes them (BASE_IMU's factor does not apply). The conversion is in `HeadAttitude.kt`:
+
+| ROS | From | Sign | How sure |
+|---|---|---|---|
+| pitch (nose down positive) | `-floatData[0]` | Segway's head pitch is positive nose up | Indirect evidence: `HEAD_JOINT_PITCH`, converted the same way, read -0.111 rad when Segway's TF had the joint 0.112 rad nose down; in a 2026-10-13 recording `floatData[0]` moved against the base's pitch. Check on the robot |
+| roll (left side up positive) | `+floatData[1]` | passed through | A guess (the right-handed set that matches the pitch and yaw signs). No recording has it yet. Check on the robot |
+| yaw (counterclockwise positive) | `+floatData[2]` | the service already negates it, as it does the joint yaw | Inferred from the joint yaw's checked sign; arbitrary zero |
+| joint roll (left side up positive) | `+HEAD_JOINT_ROLL floatData[0]` | passed through | A guess, as for the roll |
+
+The angles are taken as yaw, then pitch, then roll (tf2's `setRPY`); Segway does not document the
+order. Near level it barely matters (0.08 degree of tilt at 10 degrees of pitch and 5 of roll).
+`head.imu=false` turns both topics off and stops the head queries.
 
 ### Configuration
 
@@ -211,8 +239,9 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `clock.server` | `10.0.0.1` | the SNTP server to measure against |
 | `odom.twist` | `pose_diff` | `/loomo/odom` twist from the Pose2D difference over `odom.twist_window_s` (see TF, odometry and joint states); `sdk` publishes the SDK's low-pass filtered velocities, as before |
 | `odom.twist_window_s` | `0.25` | the `pose_diff` window in seconds, 0.05 to 0.5 |
+| `head.imu` | `true` | publish `/loomo/head/world_imu` and `/loomo/head/joint_roll` from the head's own sensors (see Head attitude); `false` stops the head queries |
 | `tf.odom` | `false` | publish `loomo_odom -> base_odom` (the Pose2D odometry) on `/tf`. Off by default: an odometry filter on the ROS side fuses `/loomo/odom` and owns `base_odom`'s parent (a frame has only one). Set `true` when nothing else publishes it |
-| `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom` and `/loomo/joint_states` get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
+| `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom`, `/loomo/joint_states` and the two head topics get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation
 The Loomo was discontinued at some point between 2019 and 2024. For now, the SDK documentation is still available [here](https://developer.segwayrobotics.com/developer/documents/segway-robots-sdk.html), and the SDK libraries can still be downloaded from the online Maven repositories.
