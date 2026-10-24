@@ -14,7 +14,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import com.autom8ed.lr2.ui.theme.LoomoROS2BridgeTheme
-import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -312,6 +311,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Segway's SDK unbinds every service of an app that stays in the background
+        // (ForegroundBindController) and never binds them again. If that happened, the base would
+        // ignore us, so restart the app: everything binds afresh. Driving is already off (latched).
+        if (this::mNetworkGate.isInitialized && this::mLocomotionPlatformInterface.isInitialized &&
+            !com.segway.robot.sdk.locomotion.sbv.Base.getInstance().isBind
+        ) {
+            mNetworkGate.restart("Segway's SDK unbound our services while in the background")
+            return
+        }
         // The button can be reached again; driving stays off until it is tapped.
         if (this::mDriveGate.isInitialized) mDriveGate.uiShown()
         /*
