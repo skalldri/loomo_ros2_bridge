@@ -2,25 +2,29 @@ package com.autom8ed.lr2
 
 import android.os.Bundle
 import android.os.Handler
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import com.autom8ed.lr2.ui.theme.LoomoROS2BridgeTheme
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.ros2.android.activity.ROSActivity
 import org.ros2.rcljava.RCLJava
 import org.ros2.rcljava.executors.Executor
 import org.ros2.rcljava.executors.MultiThreadedExecutor
 import java.util.Timer
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import com.autom8ed.lr2.vision.CameraInterface
 import com.autom8ed.lr2.vision.FrameStamp
 
@@ -37,6 +41,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var mWatchdog: Watchdog
     private lateinit var mStatsReporter: StatsReporter
     private lateinit var mNetworkGate: NetworkGate
+
+    // Push to start and the stop path (DriveGate). Created before ROS, so the screen works and the
+    // wheels stay at zero while the app waits for the network.
+    private lateinit var mDriveGate: DriveGate
+    private lateinit var mDriveStatus: MutableStateFlow<DriveGate.Status>
+    private var mDriveTicker: ScheduledExecutorService? = null
+    // Set once ROS is up; read by the ticker thread.
+    @Volatile private var mDriveStatePublisher: LocomotionPlatformInterface? = null
 
     private lateinit var mNode: RosNode
 
@@ -103,12 +115,17 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        startDriveGate()
+
         enableEdgeToEdge()
         setContent {
             LoomoROS2BridgeTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
+                    val status by mDriveStatus.collectAsState()
+                    DriveScreen(
+                        status = status,
+                        onTouchDown = { mDriveGate.touchDown() },
+                        onTap = { mDriveGate.tap() },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -121,10 +138,72 @@ class MainActivity : ComponentActivity() {
         mNetworkGate = NetworkGate(
             this,
             restartExtras = intent?.extras,
-            beforeRestart = { stopStreams() },
+            beforeRestart = { stopDriving(); stopStreams() },
             onReady = { network -> startRos(config, network) },
         )
         mNetworkGate.start()
+    }
+
+    /**
+     * The gate starts not driving. Its ticker applies the /cmd_vel and heartbeat timeouts every
+     * DriveGate.TICK_MS and publishes the driving state once ROS is up.
+     */
+    private fun startDriveGate() {
+        mDriveGate = DriveGate(BaseWheels())
+        mDriveStatus = MutableStateFlow(mDriveGate.status())
+        mDriveGate.addListener(object : DriveGate.Listener {
+            override fun onStatus(status: DriveGate.Status) {
+                mDriveStatus.value = status
+            }
+
+            override fun onEvent(event: DriveGate.Event) {
+                logDriveEvent(event)
+            }
+        })
+        Log.i(DRIVE_TAG, "not driving until the button is touched; /cmd_vel timeout " +
+            "${mDriveGate.cmdTimeoutNs / 1_000_000} ms, heartbeat timeout ${mDriveGate.heartbeatTimeoutNs / 1_000_000} ms")
+        val ticker = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "drive-gate").apply { isDaemon = true }
+        }
+        ticker.scheduleWithFixedDelay({
+            // An exception would cancel the schedule: never let one escape.
+            try {
+                mDriveGate.tick()
+                mDriveStatePublisher?.publishDriveState(mDriveGate.status().driving, System.nanoTime())
+            } catch (t: Throwable) {
+                Log.e(DRIVE_TAG, "drive gate tick failed", t)
+            }
+        }, DriveGate.TICK_MS, DriveGate.TICK_MS, TimeUnit.MILLISECONDS)
+        mDriveTicker = ticker
+    }
+
+    private fun logDriveEvent(event: DriveGate.Event) {
+        fun ms(ns: Long?) = if (ns == null) "never" else "${ns / 1_000_000} ms"
+        when (event) {
+            is DriveGate.Event.Started -> Log.w(DRIVE_TAG, "DRIVING: /cmd_vel now reaches the wheels (button)")
+            is DriveGate.Event.StartRefused ->
+                Log.w(DRIVE_TAG, "start refused: no Jetson heartbeat (last: ${ms(event.heartbeatAgeNs)})")
+            is DriveGate.Event.Stopped -> Log.w(DRIVE_TAG, "NOT DRIVING (${event.reason}): wheels set to zero")
+            is DriveGate.Event.CmdTimeout -> Log.w(
+                DRIVE_TAG, "/cmd_vel timeout: none for ${ms(event.ageNs)}; wheels set to zero " +
+                    "(last linear=${event.linear} angular=${event.angular})"
+            )
+            is DriveGate.Event.HeartbeatLost ->
+                Log.e(DRIVE_TAG, "Jetson heartbeat missing for ${ms(event.ageNs)}")
+            is DriveGate.Event.HeartbeatBack -> Log.i(DRIVE_TAG, "Jetson heartbeat received")
+            is DriveGate.Event.ZeroRefused ->
+                Log.e(DRIVE_TAG, "the base did not take a zero; retrying every ${DriveGate.TICK_MS} ms")
+            is DriveGate.Event.InvalidCmd -> Log.e(
+                DRIVE_TAG, "/cmd_vel with a non-finite value (linear=${event.linear} " +
+                    "angular=${event.angular}): wheels set to zero"
+            )
+        }
+    }
+
+    private fun stopDriving() {
+        if (this::mDriveGate.isInitialized) {
+            mDriveGate.shutdown()
+        }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -148,7 +227,8 @@ class MainActivity : ComponentActivity() {
 
         mTfPublisher = TfPublisher(this, mNode, mSensorInterface, config)
 
-        mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode)
+        mLocomotionPlatformInterface = LocomotionPlatformInterface(this, mNode, mDriveGate)
+        mDriveStatePublisher = mLocomotionPlatformInterface
 
         FrameStamp.TAG_FRAME_NUM = config.tagFrameNum
 
@@ -156,6 +236,7 @@ class MainActivity : ComponentActivity() {
         // seconds under the tag "StreamStats", plus an error line for every dropped or failed frame.
         mStatsReporter = StatsReporter(config.statsPeriodS * 1000L)
         mStatsReporter.registerExtra { mTfPublisher.statsLine() }
+        mStatsReporter.registerExtra { mDriveGate.statsLine() }
         mStatsReporter.start()
 
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
@@ -175,7 +256,7 @@ class MainActivity : ComponentActivity() {
         }
         */
 
-        mWatchdog = Watchdog(this, mNode, mHeadInterface)
+        mWatchdog = Watchdog(this, mNode, mHeadInterface) { mDriveGate.heartbeat() }
 
         // Should not block since we are using multithreading
         // should also run as fast as possible, always executing new work as it arrives
@@ -184,6 +265,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopDriving()
+        mDriveTicker?.shutdownNow()
         stopStreams()
     }
 
@@ -246,18 +329,4 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    LoomoROS2BridgeTheme {
-        Greeting("Android")
-    }
-}
+private const val DRIVE_TAG = "DriveGate"

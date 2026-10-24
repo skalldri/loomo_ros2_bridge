@@ -35,6 +35,49 @@ Here are some relevant specs:
 - Robotic "head" with integrated Android tablet
 - Speaker
 
+## Driving: push to start and the stop path
+
+The Loomo's screen shows one large red button, styled as an emergency stop, and the driving state
+in large letters. `DriveGate.kt` holds the logic; `DriveGateTest.kt` covers it.
+
+- **The app starts NOT DRIVING.** `/cmd_vel` reaches the wheels only while DRIVING. A tap on the
+  button starts driving; pressing it again stops at once (on the press, not the release). No topic
+  can switch the app to driving.
+- **A tap cannot start driving without the Jetson's heartbeat** (`/loomo/jetson_watchdog`, sent
+  every 0.5 s). The screen then reads "No Jetson heartbeat: cannot start".
+- **NOT DRIVING keeps the base balancing at zero speed.** The base stays in raw mode; the app only
+  ever sets its velocities to zero. It never changes the control mode or turns balancing off.
+- **No `/cmd_vel` for 0.5 s: the wheels are set to zero.** Driving stays on, and the next
+  `/cmd_vel` moves them again. A released teleop stick or a stopped planner ends like this.
+- **No heartbeat for 1.5 s: the app stops driving and stays stopped** (latched). It does not
+  resume when the heartbeat returns; only a tap re-arms it. The head light still turns red as before.
+- The timeouts are checked every 20 ms and before every `/cmd_vel`, so they act within 20 ms of
+  their limit. A zero the base does not take is retried every 20 ms until it does.
+- When the base service binds, and when the app stops or restarts, the app sends a zero.
+- The screen stays on while driving, so the first touch always reaches the button.
+
+The SDK does not stop the base by itself: in raw mode `Base.setLinearVelocity` and
+`Base.setAngularVelocity` (basesdk 0.6.1653) each pass one value over binder to Segway's
+locomotion service and return. The SDK keeps no timer and resends nothing, and `Base.stop()` is
+only both velocities set to zero. Before this gate, the app forwarded every `/cmd_vel` and sent
+nothing when they stopped.
+
+| Topic | Type | QoS | Meaning |
+|---|---|---|---|
+| `/loomo/drive_enabled` | `std_msgs/Bool` | reliable, transient local, depth 1 | `true` while DRIVING. Published on every change and again every second. |
+
+The app only publishes this topic; it subscribes to nothing that can start driving. A reader
+behind a DDS bridge gets the current value within a second even if the bridge does not keep
+transient-local samples.
+
+Logcat, tag `DriveGate`: one line per start, stop (with its reason), refused start, `/cmd_vel`
+timeout (with the last command), heartbeat loss and return. `StreamStats` adds a line every 5 s:
+
+```
+adb logcat -s DriveGate:* StreamStats:I
+drive mode=NOT_DRIVING reason=START_UP heartbeat=ok following=false cmd passed=0 ignored=0 invalid=0 timeouts=0 starts=0 refused=0 stops button=0 heartbeat=0 zero_refused=0
+```
+
 ## Camera streams
 
 The app publishes the RealSense depth and colour cameras and the fisheye camera at 30 fps on
