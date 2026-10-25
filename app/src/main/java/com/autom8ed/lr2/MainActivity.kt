@@ -123,14 +123,32 @@ class MainActivity : ComponentActivity() {
         mNetworkGate = NetworkGate(
             this,
             restartExtras = intent?.extras,
-            beforeRestart = { stopStreams() },
+            // When another instance owns ROS here, stop its driving and streams too.
+            beforeRestart = { stopForRestart(); rosStack.stopOwnerFor(this) },
             onReady = { network -> startRos(config, network) },
         )
+        // A second MainActivity in a process whose ROS stack is already running (see
+        // RosStackGuard): don't start another stack, restart the app into a fresh process.
+        if (rosStack.ownedByOther(this)) {
+            mNetworkGate.restart("ROS already runs in this process for another MainActivity")
+            return
+        }
         mNetworkGate.start()
+    }
+
+    /** What a restart stops first. Also run for this instance when another instance restarts. */
+    private fun stopForRestart() {
+        stopStreams()
     }
 
     @OptIn(DelicateCoroutinesApi::class)
     private fun startRos(config: BridgeConfig, network: android.net.Network) {
+        // Two instances can both wait for the network; only the first one starts ROS.
+        if (!rosStack.claim(this) { stopForRestart() }) {
+            mNetworkGate.restart("another MainActivity started ROS in this process first")
+            return
+        }
+
         // Clock offset to the Jetson, so every stamp is on the Jetson's clock. Started first: the
         // first answer normally arrives while the rest is still being set up, and stamped
         // messages are held back until it does (see TimeSync).
@@ -255,6 +273,11 @@ class MainActivity : ComponentActivity() {
 
     protected fun getPeriod(): Long {
         return SPINNER_PERIOD_MS
+    }
+
+    companion object {
+        /** One per process: at most one MainActivity runs ROS in it. */
+        private val rosStack = RosStackGuard()
     }
 }
 
