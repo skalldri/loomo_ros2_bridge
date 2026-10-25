@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -35,11 +36,13 @@ private val DrivingText = Color(0xFF5CFF6A)
 private val WarningText = Color(0xFFFFB300)
 private val EStopRed = Color(0xFFD50000)
 private val EStopYellow = Color(0xFFFFD600)
+private val BannerBackground = Color(0xFFFF6F00)
 
 /**
  * The Loomo's screen: the push-to-start button, styled as an emergency stop (red on a yellow
  * ring), and the driving state in large letters. The button stops driving as soon as it is
- * pressed; a tap (press and release on the button) starts it.
+ * pressed; a tap (press and release on the button) starts it. [linkWarning], when not null, is
+ * shown in a banner across the top (JetsonLink: the Ethernet link to the Jetson is slow).
  */
 @Composable
 fun DriveScreen(
@@ -47,6 +50,7 @@ fun DriveScreen(
     onTouchDown: () -> Unit,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
+    linkWarning: String? = null,
 ) {
     // A sleeping screen takes the first touch to wake up: keep it on while driving, so a single
     // touch always stops.
@@ -59,8 +63,50 @@ fun DriveScreen(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .background(if (status.driving) DrivingBackground else StoppedBackground)
-            .padding(16.dp),
+            .background(if (status.driving) DrivingBackground else StoppedBackground),
+    ) {
+        val bannerSize = with(LocalDensity.current) { (minOf(maxWidth, maxHeight) * 0.05f).toSp() }
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (linkWarning != null) {
+                LinkBanner(linkWarning, bannerSize)
+            }
+            DriveControls(
+                status, onTouchDown, onTap,
+                Modifier.fillMaxWidth().weight(1f).padding(16.dp),
+            )
+        }
+    }
+}
+
+/** A full-width banner, white on orange, so it reads from a distance and differs from the button. */
+@Composable
+private fun LinkBanner(text: String, textSize: TextUnit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BannerBackground)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = textSize,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun DriveControls(
+    status: DriveGate.Status,
+    onTouchDown: () -> Unit,
+    onTap: () -> Unit,
+    modifier: Modifier,
+) {
+    BoxWithConstraints(
+        modifier = modifier,
         contentAlignment = Alignment.Center,
     ) {
         val landscape = maxWidth > maxHeight
