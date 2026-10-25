@@ -187,6 +187,20 @@ The app publishes pitch = `floatData[0] * 32767/18000` and roll = `-floatData[1]
 (2026-10-23) the reported pitch was 0.525 times and the roll -0.520 times the tilt of gravity
 measured by a separate IMU.
 
+The base controller's angles can also carry a constant offset. On one Loomo (2026-10-24), balancing
+on a spot that a digital level read as level, the app's roll read +0.89 degree; on a spot the level
+read as 1.4 degree right side down (ROS roll +1.4), it read +2.27. Pitch showed no offset beyond the
+balance wobble (about +-0.5 degree). Segway's software applies no calibration on the Android side
+and exposes no stored zero, so `tilt.roll_offset_deg` and `tilt.pitch_offset_deg` (see
+Configuration) take what the app reads on a level floor and subtract it before `base_odom ->
+base_link` is published (`TiltOffset.kt`). Everything mounted on `base_link` (the head, its cameras
+and any sensor added on the ROS side) follows through TF. Nothing else the app publishes is changed:
+`/loomo/odom` and `loomo_odom -> base_odom` carry no tilt; the head and camera transforms and
+`/loomo/joint_states` are relative to `base_link`. `/loomo/head/world_imu` is left alone: it is not a
+head IMU (its pitch is the base's plus the head joint, its roll a near-constant +0.2 degree with no
+base roll in it), so the roll offset must not be subtracted from it. Whether the offset
+changes between power-ups is not known yet: check it with a level after a boot.
+
 Before, every capture republished the latest snapshot: ~33% of the odometry, `loomo_odom ->
 base_odom` and `base_odom -> base_link` messages repeated the previous sample, and some copies
 differed by a fraction of a millisecond after the clock-offset conversion. The joint states took
@@ -248,6 +262,10 @@ adb push bridge.properties /sdcard/Android/data/com.autom8ed.lr2/files/bridge.pr
 adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # one-off override
 ```
 
+The file lives in the app's own directory, so Android deletes it when the app is uninstalled, for
+example when an APK signed with a different key can only be installed after an uninstall. Push it
+again after such an install, and check the `BridgeConfig` lines in logcat.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `depth.enabled`, `colour.enabled`, `fisheye.enabled` | `true` | run the stream |
@@ -263,6 +281,8 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `odom.twist_window_s` | `0.25` | the `pose_diff` window in seconds, 0.05 to 0.5 |
 | `head.imu` | `true` | publish `/loomo/head/world_imu` and `/loomo/head/joint_roll` from the head's own sensors (see Head attitude); `false` stops the head queries |
 | `tf.odom` | `false` | publish `loomo_odom -> base_odom` (the Pose2D odometry) on `/tf`. Off by default: an odometry filter on the ROS side fuses `/loomo/odom` and owns `base_odom`'s parent (a frame has only one). Set `true` when nothing else publishes it |
+| `tilt.roll_offset_deg` | `0.0` | the base's roll on a level floor, in degrees, ROS sign (positive right side down); subtracted from the roll in `base_odom -> base_link` so a level base reads 0 (see TF, odometry and joint states). -5 to 5 |
+| `tilt.pitch_offset_deg` | `0.0` | the same for the pitch (positive nose down) |
 | `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom`, `/loomo/joint_states` and the two head topics get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 
 ## Preservation

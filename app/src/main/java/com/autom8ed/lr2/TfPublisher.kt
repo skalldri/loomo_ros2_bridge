@@ -64,6 +64,8 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
     private val mPublishOdomTf: Boolean = config.tfOdom
     // The head's own attitude and roll joint (BridgeConfig head.imu), or null when off.
     private val mHeadImu: HeadImuPublisher? = if (config.headImu) HeadImuPublisher(node) else null
+    // The base tilt's constant error (BridgeConfig tilt.roll_offset_deg, tilt.pitch_offset_deg).
+    private val mTiltOffset: TiltOffset = config.tiltOffset
     @Volatile private var mTwistFallbacks = 0L
     @Volatile private var mJointStateSkips = 0L
 
@@ -390,9 +392,10 @@ class TfPublisher(ctx: Context, node: RosNode, mSensorInterface: SensorInterface
         vector3.setZ(0.0)
 
         // BASE_IMU's angles are 0.549 times the true ones, and its roll has the opposite sign to
-        // ROS roll: Segway's service scales the controller's counts wrongly (see BaseTilt).
-        val pitch = BaseTilt.pitchRad(baseImuData.floatData[0])
-        val roll = BaseTilt.rollRad(baseImuData.floatData[1])
+        // ROS roll: Segway's service scales the controller's counts wrongly (see BaseTilt). The
+        // configured constant offset comes off after that (see TiltOffset).
+        val pitch = mTiltOffset.pitch(BaseTilt.pitchRad(baseImuData.floatData[0]))
+        val roll = mTiltOffset.roll(BaseTilt.rollRad(baseImuData.floatData[1]))
         val q = BaseTilt.quaternion(roll, pitch)
 
         val quaternion = Quaternion()
