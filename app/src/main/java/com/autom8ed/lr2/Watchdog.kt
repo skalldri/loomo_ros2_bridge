@@ -5,7 +5,17 @@ import org.ros2.rcljava.publisher.Publisher
 import std_msgs.msg.Empty
 import kotlin.concurrent.thread
 
-class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadInterface) {
+/**
+ * Heartbeats with the Jetson: sends /loomo/android_watchdog every 0.5 s, and shows on the head
+ * light whether /loomo/jetson_watchdog (sent every 0.5 s) still arrives. Every received heartbeat
+ * also goes to [onHeartbeat], which feeds DriveGate: driving stops 1.5 s after the last one.
+ */
+class Watchdog(
+    ctx: android.content.Context,
+    node: RosNode,
+    headInterface: HeadInterface,
+    private val onHeartbeat: () -> Unit = {},
+) {
 
     val mNode: RosNode = node
     // RELIABLE like its consumer, the Jetson's loomo_watchdog (rclpy default QoS). With the
@@ -77,6 +87,7 @@ class Watchdog(ctx: android.content.Context, node: RosNode, headInterface: HeadI
         // Every time we get a message from the Jetson, indicate that it's alive again
         mNode.node.createSubscription(std_msgs.msg.Empty::class.java, "/loomo/jetson_watchdog") {
             mJetsonAlive = true
+            onHeartbeat()
         }
     }
 
