@@ -50,6 +50,10 @@ import java.util.Properties
  *  - `head.imu`: publish the head's attitude in the world (/loomo/head/world_imu) and its roll
  *    joint (/loomo/head/joint_roll), read from the head's own sensors (default true); see
  *    HeadImuPublisher.
+ *  - `tilt.roll_offset_deg`, `tilt.pitch_offset_deg`: a constant error of the base's roll and
+ *    pitch, in degrees with the ROS signs, subtracted before base_odom -> base_link is published,
+ *    so a level base reads 0 (default 0, -5..5). Set them to what the app reads on a level floor;
+ *    see TiltOffset.
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -70,6 +74,10 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
     val tfOdom = bool("tf.odom", false)
     val headImu = bool("head.imu", true)
+    val tiltOffset = TiltOffset(
+        rollDeg = double("tilt.roll_offset_deg", 0.0, min = -TiltOffset.MAX_DEG, max = TiltOffset.MAX_DEG),
+        pitchDeg = double("tilt.pitch_offset_deg", 0.0, min = -TiltOffset.MAX_DEG, max = TiltOffset.MAX_DEG)
+    )
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
@@ -124,6 +132,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
         Log.i(TAG, "streams: $depth $colour $fisheye")
         Log.i(TAG, "queue.depth=$queueDepth stats.tagFrameNum=$tagFrameNum stats.periodS=$statsPeriodS dds.priority=$ddsPriority clock.sync=$clockSync clock.server=$clockServer")
         Log.i(TAG, "odom.twist=${if (odomTwistPoseDiff) "pose_diff" else "sdk"} odom.twist_window_s=$odomTwistWindowS tf.odom=$tfOdom head.imu=$headImu")
+        Log.i(TAG, "$tiltOffset")
         for (k in values.keys.sorted()) {
             if (k !in KNOWN_KEYS) Log.w(TAG, "unknown key \"$k\" ignored")
         }
@@ -137,7 +146,8 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
             "colour.enabled", "colour.raw", "colour.h264",
             "fisheye.enabled", "fisheye.raw", "fisheye.h264",
             "queue.depth", "stats.tagFrameNum", "stats.periodS", "dds.priority",
-            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s", "tf.odom", "head.imu"
+            "clock.sync", "clock.server", "odom.twist", "odom.twist_window_s", "tf.odom", "head.imu",
+            "tilt.roll_offset_deg", "tilt.pitch_offset_deg"
         )
 
         fun load(context: Context, intent: Intent?): BridgeConfig {
