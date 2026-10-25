@@ -117,13 +117,17 @@ private fun DriveControls(
         val labelSize = with(density) { (shortSide * 0.11f).toSp() }
         if (landscape) {
             val buttonSize = minOf(maxHeight * 0.9f, maxWidth * 0.45f)
+            // Two fixed halves, so the button stays put while the state text changes width.
             Row(
                 modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                EStopButton(status.driving, buttonSize, labelSize, onTouchDown, onTap)
-                StateText(status, titleSize, detailSize)
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    EStopButton(status.driving, buttonSize, labelSize, onTouchDown, onTap)
+                }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    StateText(status, titleSize, detailSize)
+                }
             }
         } else {
             val buttonSize = minOf(maxWidth * 0.85f, maxHeight * 0.55f)
