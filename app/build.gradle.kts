@@ -54,6 +54,9 @@ dependencies {
     implementation(libs.slf4j)
     implementation(libs.slf4j.android)
 
+    // Restarts the app in a fresh process (NetworkGate.restart)
+    implementation(libs.process.phoenix)
+
     // BEGIN SEGWAY LIBRARIES
 
     implementation(libs.segway.robot.visionsdk)

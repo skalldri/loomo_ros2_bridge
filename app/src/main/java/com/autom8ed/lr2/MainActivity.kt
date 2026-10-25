@@ -152,9 +152,16 @@ class MainActivity : ComponentActivity() {
         mNetworkGate = NetworkGate(
             this,
             restartExtras = intent?.extras,
-            beforeRestart = { stopDriving(); stopStreams() },
+            // When another instance owns ROS here, stop its driving and streams too.
+            beforeRestart = { stopForRestart(); rosStack.stopOwnerFor(this) },
             onReady = { network -> startRos(config, network) },
         )
+        // A second MainActivity in a process whose ROS stack is already running (see
+        // RosStackGuard): don't start another stack, restart the app into a fresh process.
+        if (rosStack.ownedByOther(this)) {
+            mNetworkGate.restart("ROS already runs in this process for another MainActivity")
+            return
+        }
         mNetworkGate.start()
     }
 
@@ -222,8 +229,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** What a restart stops first. Also run for this instance when another instance restarts. */
+    private fun stopForRestart() {
+        stopDriving()
+        stopStreams()
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     private fun startRos(config: BridgeConfig, network: android.net.Network) {
+        // Two instances can both wait for the network; only the first one starts ROS.
+        if (!rosStack.claim(this) { stopForRestart() }) {
+            mNetworkGate.restart("another MainActivity started ROS in this process first")
+            return
+        }
+
         // Clock offset to the Jetson, so every stamp is on the Jetson's clock. Started first: the
         // first answer normally arrives while the rest is still being set up, and stamped
         // messages are held back until it does (see TimeSync).
@@ -311,6 +330,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Segway's SDK unbinds every service of an app that stays in the background
+        // (ForegroundBindController) and never binds them again. If that happened, the base would
+        // ignore us, so restart the app: everything binds afresh. Driving is already off (latched).
+        if (this::mNetworkGate.isInitialized && this::mLocomotionPlatformInterface.isInitialized &&
+            !com.segway.robot.sdk.locomotion.sbv.Base.getInstance().isBind
+        ) {
+            mNetworkGate.restart("Segway's SDK unbound our services while in the background")
+            return
+        }
         // The button can be reached again; driving stays off until it is tapped.
         if (this::mDriveGate.isInitialized) mDriveGate.uiShown()
         /*
@@ -362,6 +390,11 @@ class MainActivity : ComponentActivity() {
 
     protected fun getPeriod(): Long {
         return SPINNER_PERIOD_MS
+    }
+
+    companion object {
+        /** One per process: at most one MainActivity runs ROS in it. */
+        private val rosStack = RosStackGuard()
     }
 }
 
