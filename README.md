@@ -196,8 +196,9 @@ Configuration) take what the app reads on a level floor and subtract it before `
 base_link` is published (`TiltOffset.kt`). Everything mounted on `base_link` (the head, its cameras
 and any sensor added on the ROS side) follows through TF. Nothing else the app publishes is changed:
 `/loomo/odom` and `loomo_odom -> base_odom` carry no tilt; the head and camera transforms and
-`/loomo/joint_states` are relative to `base_link`; `/loomo/head/world_imu` comes from the head's own
-IMU, not from the base controller, so the base's offset does not apply to it. Whether the offset
+`/loomo/joint_states` are relative to `base_link`. `/loomo/head/world_imu` is left alone: it is not a
+head IMU (its pitch is the base's plus the head joint, its roll a near-constant +0.2 degree with no
+base roll in it), so the roll offset must not be subtracted from it. Whether the offset
 changes between power-ups is not known yet: check it with a level after a boot.
 
 Before, every capture republished the latest snapshot: ~33% of the odometry, `loomo_odom ->
