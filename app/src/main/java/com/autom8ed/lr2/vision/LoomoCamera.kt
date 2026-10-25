@@ -1,5 +1,7 @@
 package com.autom8ed.lr2.vision
 
+import android.util.Log
+
 import com.autom8ed.lr2.TfPublisherConstants
 import com.segway.robot.sdk.vision.Vision
 import com.segway.robot.sdk.vision.calibration.ColorDepthCalibration
@@ -53,7 +55,15 @@ abstract class LoomoCamera(vision: Vision, loomoStreamType: Int, imageType: Imag
     }
 
     fun startStream(listener: Vision.FrameListener) {
-        mVision.startListenFrame(mLoomoStreamType, listener)
+        try {
+            mVision.startListenFrame(mLoomoStreamType, listener)
+        } catch (e: IllegalArgumentException) {
+            // The vision service still has a listener on this stream, e.g. one left by an earlier
+            // instance of the app: take the stream over instead of crashing.
+            Log.w("LoomoCamera", "stream $mLoomoStreamType already has a listener (${e.message}); restarting it")
+            mVision.stopListenFrame(mLoomoStreamType)
+            mVision.startListenFrame(mLoomoStreamType, listener)
+        }
     }
 
     fun stopStream() {
