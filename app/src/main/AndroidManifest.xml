@@ -26,6 +26,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- ProcessPhoenix's restart activity (NetworkGate.restart). The library declares it in its
+             own process. Here it also gets its own task: launched from MainActivity, it would
+             otherwise join MainActivity's task, and finishAndRemoveTask() would remove it too. -->
+        <activity
+            android:name="com.jakewharton.processphoenix.PhoenixActivity"
+            android:taskAffinity="com.autom8ed.lr2.phoenix"
+            android:excludeFromRecents="true"
+            tools:node="merge" />
         <receiver android:name="IntentReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="com.segway.robot.action.TO_ROBOT" />

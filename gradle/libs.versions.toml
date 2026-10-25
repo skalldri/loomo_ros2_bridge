@@ -11,6 +11,7 @@ composeBom = "2024.05.00"
 slf4jAndroid = "2.0.13-0"
 slf4jVer = "2.0.13"
 cameraXVer = "1.5.0-alpha03"
+processPhoenix = "3.0.0"
 
 segwayRobotSpeechSdk = "0.6.335"
 segwayRobotHeadsdk = "0.6.1653"
@@ -64,6 +65,7 @@ segway-robot-basicclass = { group = "com.segway.robot", name = "basic-class", ve
 segway-robot-sdkbase = { group = "com.segway.robot", name = "sdkbase", version.ref = "segwayRobotSdkBase" }
 slf4j = { group = "org.slf4j",  name = "slf4j-api", version.ref = "slf4jVer" }
 slf4j-android = { module = "uk.uuid.slf4j:slf4j-android", version.ref = "slf4jAndroid" }
+process-phoenix = { group = "com.jakewharton", name = "process-phoenix", version.ref = "processPhoenix" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

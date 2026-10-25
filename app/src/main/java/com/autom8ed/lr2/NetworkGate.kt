@@ -1,8 +1,6 @@
 package com.autom8ed.lr2
 
 import android.app.Activity
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -12,9 +10,8 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Bundle
 import android.os.Handler
-import android.os.Process
-import android.os.SystemClock
 import android.util.Log
+import com.jakewharton.processphoenix.ProcessPhoenix
 import java.net.Inet4Address
 
 /**
@@ -101,8 +98,9 @@ class NetworkGate(
             ?.map { it.toString() }
             ?: emptyList()
 
-    /** Restarts the app: [beforeRestart], then an alarm relaunches MainActivity and this process exits.
-     *  Also used by MainActivity when Segway's SDK has unbound its services in the background. */
+    /** Restarts the app in a fresh process: [beforeRestart], then MainActivity is relaunched at once.
+     *  Also used by MainActivity when Segway's SDK has unbound its services in the background, and
+     *  when a second MainActivity finds ROS already running in this process. */
     fun restart(reason: String) {
         if (restarting) return
         restarting = true
@@ -113,21 +111,21 @@ class NetworkGate(
             Log.e(TAG, "cleanup before restart failed", t)
         }
         val intent = Intent(ctx, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         restartExtras?.let { intent.putExtras(it) }
-        val pending = PendingIntent.getActivity(ctx, 0, intent, PendingIntent.FLAG_CANCEL_CURRENT)
-        val alarms = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarms.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + RESTART_DELAY_MS, pending)
-        // Finish the activity first. An activity that has saved its state (it went to the
-        // background) and is killed while resuming is restarted by Android at once in a new
-        // process; the alarm then adds a second MainActivity to that process, and both run ROS.
+        // ProcessPhoenix starts a small activity in a separate process (":phoenix"). It kills this
+        // process, starts [intent] with NEW_TASK|CLEAR_TASK, and exits; MainActivity then comes up
+        // in a fresh process. This replaces an AlarmManager relaunch, which Android 5.1 delays to
+        // at least 5 s (4.95-4.99 s measured): the launcher showed for 5 s, and a tap on the icon
+        // in that time put a second MainActivity in the relaunched process.
+        ProcessPhoenix.triggerRebirth(ctx, intent)
+        // Finish the activity before the process dies. An activity that has saved its state (it
+        // went to the background) and dies while resuming is restarted by Android at once in a new
+        // process; the relaunch then adds a second MainActivity to that process, and both run ROS.
+        // The phoenix activity has its own task (AndroidManifest.xml), so this does not remove it.
         (ctx as? Activity)?.finishAndRemoveTask()
-        Process.killProcess(Process.myPid())
     }
 
     companion object {
         const val TAG = "NetworkGate"
-        // Android 5.1 delays alarms by at least 5 s, so the relaunch comes about 5 s later.
-        private const val RESTART_DELAY_MS = 1500L
     }
 }
