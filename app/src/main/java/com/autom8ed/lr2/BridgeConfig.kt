@@ -47,9 +47,9 @@ import java.util.Properties
  *    fuses /loomo/odom. Set it to true when nothing else publishes that transform. /loomo/odom
  *    and the rest of the TF (base_odom -> base_link, the head and the sensors) are published
  *    either way.
- *  - `head.imu`: publish the head's attitude in the world (/loomo/head/world_imu) and its roll
- *    joint (/loomo/head/joint_roll), read from the head's own sensors (default true); see
- *    HeadImuPublisher.
+ *  - `head.imu`: publish Segway's HEAD_WORLD_IMU (/loomo/head/world_imu) and HEAD_JOINT_ROLL
+ *    (/loomo/head/joint_roll) (default false). They are not head measurements: the pitch is the
+ *    base's plus the head joint, the roll a constant, the yaw zero (see HeadAttitude).
  */
 class BridgeConfig private constructor(private val values: Map<String, String>, private val sources: String) {
 
@@ -69,7 +69,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
     val tfOdom = bool("tf.odom", false)
-    val headImu = bool("head.imu", true)
+    val headImu = bool("head.imu", false)
 
     private fun stream(name: String, raw: Boolean, h264: Boolean) = Stream(
         name,
