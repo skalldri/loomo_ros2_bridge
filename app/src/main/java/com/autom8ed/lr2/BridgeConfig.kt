@@ -47,9 +47,9 @@ import java.util.Properties
  *    fuses /loomo/odom. Set it to true when nothing else publishes that transform. /loomo/odom
  *    and the rest of the TF (base_odom -> base_link, the head and the sensors) are published
  *    either way.
- *  - `head.imu`: publish the head's attitude in the world (/loomo/head/world_imu) and its roll
- *    joint (/loomo/head/joint_roll), read from the head's own sensors (default true); see
- *    HeadImuPublisher.
+ *  - `head.imu`: publish Segway's HEAD_WORLD_IMU (/loomo/head/world_imu) and HEAD_JOINT_ROLL
+ *    (/loomo/head/joint_roll) (default false). They are not head measurements: the pitch is the
+ *    base's plus the head joint, the roll a constant, the yaw zero (see HeadAttitude).
  *  - `tilt.roll_offset_deg`, `tilt.pitch_offset_deg`: a constant error of the base's roll and
  *    pitch, in degrees with the ROS signs, subtracted before base_odom -> base_link is published,
  *    so a level base reads 0 (default 0, -5..5). Set them to what the app reads on a level floor;
@@ -73,7 +73,7 @@ class BridgeConfig private constructor(private val values: Map<String, String>, 
     val odomTwistPoseDiff = choice("odom.twist", listOf("pose_diff", "sdk"), "pose_diff") == "pose_diff"
     val odomTwistWindowS = double("odom.twist_window_s", 0.25, min = 0.05, max = 0.5)
     val tfOdom = bool("tf.odom", false)
-    val headImu = bool("head.imu", true)
+    val headImu = bool("head.imu", false)
     val tiltOffset = TiltOffset(
         rollDeg = double("tilt.roll_offset_deg", 0.0, min = -TiltOffset.MAX_DEG, max = TiltOffset.MAX_DEG),
         pitchDeg = double("tilt.pitch_offset_deg", 0.0, min = -TiltOffset.MAX_DEG, max = TiltOffset.MAX_DEG)

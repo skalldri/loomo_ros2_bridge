@@ -6,8 +6,8 @@ import com.segway.robot.sdk.perception.sensor.SensorData
 import org.ros2.rcljava.publisher.Publisher
 
 /**
- * Publishes what the head's own sensors report (BridgeConfig head.imu, default on). It only
- * reads: nothing here commands the head.
+ * Publishes Segway's HEAD_WORLD_IMU and HEAD_JOINT_ROLL (BridgeConfig head.imu, default off: they
+ * carry no head measurement, see [HeadAttitude]). It only reads: nothing here commands the head.
  *  - [TOPIC_WORLD_IMU] (sensor_msgs/Imu): HEAD_WORLD_IMU, the head's attitude in the world, as an
  *    orientation only, in the URDF's head frame ([FRAME_ID]). The SDK gives no angular velocity or
  *    acceleration for the head, so both are marked as not provided (covariance[0] = -1, as
