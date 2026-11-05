@@ -177,7 +177,7 @@ sample is published once, decided by its raw timestamp (`SampleGate.kt`):
 | `/tf` `loomo_odom -> base_odom` (only with `tf.odom=true`), `/loomo/odom` | 20 Hz | Pose2D sample | 20 Hz timer |
 | `/tf` `base_odom -> base_link`, ultrasonic and IR mounts | 20 Hz | base IMU sample | 20 Hz timer |
 | `/loomo/joint_states` (`neck_yaw_joint`, `head_pitch_joint`) | 30 Hz | depth frame | depth frame |
-| `/loomo/head/world_imu`, `/loomo/head/joint_roll` (only with `head.imu=true`, the default; see Head attitude) | 20 Hz | head sample | 20 Hz timer |
+| `/loomo/head/world_imu`, `/loomo/head/joint_roll` (only with `head.imu=true`; off by default, see Head attitude) | 20 Hz | head sample | 20 Hz timer |
 
 `base_odom -> base_link` is the base's pitch and roll. Segway's locomotion service converts the
 base controller's angles, counted in 0.01 degree, with `raw * PI / 32767`. BASE_IMU therefore
@@ -214,8 +214,21 @@ publishes.
 
 ### Head attitude
 
-The head has its own IMU. On the same 20 Hz timer the app reads two of the head's sensors and
-publishes them. It only reads them: nothing here commands the head.
+**Off by default (`head.imu=false`): these topics carry no measurement from the head.** Measured on
+the robot on 2026-10-24, against the base tilt, the head joints, an IMU on the column, the head's
+fisheye image and a digital level:
+
+- the world pitch is the base's pitch plus the head pitch joint minus 4.0 degrees (gain 0.99-1.00,
+  residual 0.1-0.2 degree parked), so it adds nothing to `base_odom -> base_link` and
+  `head_pitch_joint`;
+- the world roll stays near +0.2 degree whatever the body does: it ignored a base roll of up to 9
+  degrees and a 14-degree sway of the body that the head's own fisheye camera saw;
+- the world yaw is always 0, and the roll joint is always 0 (no roll motor);
+- the samples arrive with gaps over 100 ms in 4.5-11% of intervals.
+
+So `HEAD_WORLD_IMU` looks computed by Segway's firmware from the base's pitch and the head encoder
+(inferred), not read from an IMU in the head. With `head.imu=true`, on the same 20 Hz timer the app
+reads the two values and publishes them. It only reads them: nothing here commands the head.
 
 | Topic | Type | Content |
 |---|---|---|
@@ -228,8 +241,8 @@ how the head encodes them (BASE_IMU's factor does not apply). The conversion is 
 
 | ROS | From | Sign | How sure |
 |---|---|---|---|
-| pitch (nose down positive) | `-floatData[0]` | Segway's head pitch is positive nose up | Indirect evidence: `HEAD_JOINT_PITCH`, converted the same way, read -0.111 rad when Segway's TF had the joint 0.112 rad nose down; in a 2026-10-13 recording `floatData[0]` moved against the base's pitch. Check on the robot |
-| roll (left side up positive) | `+floatData[1]` | passed through | A guess (the right-handed set that matches the pitch and yaw signs). No recording has it yet. Check on the robot |
+| pitch (nose down positive) | `-floatData[0]` | Segway's head pitch is positive nose up | Measured on the robot 2026-10-23: nose down read +58 degrees, nose up -63 |
+| roll (left side up positive) | `+floatData[1]` | passed through | Untestable: the value stays near +0.2 degree whatever the body's roll |
 | yaw (counterclockwise positive) | `+floatData[2]` | the service already negates it, as it does the joint yaw | Inferred from the joint yaw's checked sign; arbitrary zero |
 | joint roll (left side up positive) | `+HEAD_JOINT_ROLL floatData[0]` | passed through | A guess, as for the roll |
 
@@ -261,7 +274,7 @@ adb shell am start -n com.autom8ed.lr2/.MainActivity --es colour.raw true   # on
 | `clock.server` | `10.0.0.1` | the SNTP server to measure against |
 | `odom.twist` | `pose_diff` | `/loomo/odom` twist from the Pose2D difference over `odom.twist_window_s` (see TF, odometry and joint states); `sdk` publishes the SDK's low-pass filtered velocities, as before |
 | `odom.twist_window_s` | `0.25` | the `pose_diff` window in seconds, 0.05 to 0.5 |
-| `head.imu` | `true` | publish `/loomo/head/world_imu` and `/loomo/head/joint_roll` from the head's own sensors (see Head attitude); `false` stops the head queries |
+| `head.imu` | `false` | publish `/loomo/head/world_imu` and `/loomo/head/joint_roll` (Segway's HEAD_WORLD_IMU and HEAD_JOINT_ROLL). Off by default: they carry no head measurement (see Head attitude) |
 | `tf.odom` | `false` | publish `loomo_odom -> base_odom` (the Pose2D odometry) on `/tf`. Off by default: an odometry filter on the ROS side fuses `/loomo/odom` and owns `base_odom`'s parent (a frame has only one). Set `true` when nothing else publishes it |
 | `dds.priority` | `true` | load `assets/fastdds_profiles.xml`: TF, `/loomo/odom`, `/loomo/joint_states` and the two head topics get their own Fast DDS sender thread instead of queueing behind the raw images (#17); `false` runs with Fast DDS defaults |
 

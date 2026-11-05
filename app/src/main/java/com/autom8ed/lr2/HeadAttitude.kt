@@ -7,8 +7,17 @@ import kotlin.math.sin
  * The head's attitude in the world and its roll joint in ROS terms (REP 103: x forward, y left,
  * z up), from the SDK's HEAD_WORLD_IMU and HEAD_JOINT_ROLL samples.
  *
- * HEAD_WORLD_IMU's floatData is [pitch, roll, yaw]: the head's attitude in the world, from the
- * head's own IMU. HEAD_JOINT_ROLL's floatData[0] is the head's roll joint.
+ * HEAD_WORLD_IMU's floatData is [pitch, roll, yaw]. Despite its name it is not a measurement from an
+ * IMU in the head (measured on the robot, 2026-10-24, against the base tilt, the head joints, a
+ * LIDAR IMU on the column, the fisheye image and a digital level):
+ *  - pitch = the base's pitch + the head pitch joint - 4.0 deg (gain 0.99-1.00, residual 0.1-0.2
+ *    deg parked), so it adds nothing to base_odom -> base_link and head_pitch_joint;
+ *  - roll is a near-constant +0.2 deg: it ignored a base roll of up to 9 deg and a 14 deg sway
+ *    of the body that the head's own fisheye camera saw;
+ *  - yaw is always 0, through hundreds of turns.
+ * It is presumably computed by Segway's firmware from the base's pitch and the head encoder
+ * (inferred). Hence BridgeConfig head.imu defaults to off. HEAD_JOINT_ROLL's floatData[0] is the
+ * head's roll joint; it is always 0 (the head has no roll motor).
  *
  * Scale: Segway's locomotion service converts each of the head controller's int16 angles with
  * `raw / 10427.832` (182 counts per degree, so 32767 counts are 180.04 degrees: pi / 32767 rad per
