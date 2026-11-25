@@ -30,8 +30,9 @@ import org.ros2.rcljava.publisher.Publisher
  *    (2026-11-24);
  *  - the base's state: the RobotState broadcasts of Segway's locomotion service
  *    (RobotEventStateManager). The service broadcasts events (PUSHING, LIFT_UP, ...) when they
- *    happen, and a RobotState in answer to QUERY_STATE. Each event triggers a query, so a change
- *    shows within about a second (a push on 2026-11-24 did). Without events, a query goes out
+ *    happen, and a RobotState in answer to QUERY_STATE. Each event triggers a query on
+ *    the next tick (not tested on the robot: the push seen within a second on 2026-11-24 was with
+ *    a build that asked every second). Without events, a query goes out
  *    when the state is older than [QUERY_AFTER_NS], at most every [QUERY_PERIOD_NS]: the service
  *    logs a warning line for each one, and logcat wraps within minutes.
  *

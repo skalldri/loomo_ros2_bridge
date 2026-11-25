@@ -31,7 +31,7 @@ object LoomoStatus {
     /**
      * A base state older than this (ns) is STALE: Segway's service stopped answering. Not less:
      * on 2026-11-24 its answers to QUERY_STATE stopped for 20 s with nobody touching the robot,
-     * then all arrived at once (Android delivers them through a shared, serial queue).
+     * then all arrived at once. The cause is not known; Android's shared broadcast queue is a guess.
      */
     const val BASE_STATE_STALE_NS = 30_000_000_000L
 
