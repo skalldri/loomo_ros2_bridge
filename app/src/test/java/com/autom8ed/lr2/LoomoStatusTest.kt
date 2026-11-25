@@ -9,30 +9,28 @@ class LoomoStatusTest {
 
     @Test
     fun batteryLevelsFollowTheThresholds() {
-        assertEquals(LoomoStatus.OK, LoomoStatus.battery(100, false).level)
-        assertEquals(LoomoStatus.OK, LoomoStatus.battery(20, false).level)
-        assertEquals(LoomoStatus.WARN, LoomoStatus.battery(19, false).level)
-        assertEquals(LoomoStatus.WARN, LoomoStatus.battery(10, true).level)
-        assertEquals(LoomoStatus.ERROR, LoomoStatus.battery(9, true).level)
-        assertEquals(LoomoStatus.ERROR, LoomoStatus.battery(0, null).level)
+        assertEquals(LoomoStatus.OK, LoomoStatus.battery(100).level)
+        assertEquals(LoomoStatus.OK, LoomoStatus.battery(20).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.battery(19).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.battery(10).level)
+        assertEquals(LoomoStatus.ERROR, LoomoStatus.battery(9).level)
+        assertEquals(LoomoStatus.ERROR, LoomoStatus.battery(0).level)
     }
 
     @Test
     fun batteryMessageAndValues() {
-        val s = LoomoStatus.battery(15, true)
+        val s = LoomoStatus.battery(15)
         assertEquals(LoomoStatus.BATTERY, s.name)
-        assertEquals("15 %, charging (low)", s.message)
+        assertEquals("15 % (low)", s.message)
         assertEquals("15", value(s, "percent"))
-        assertEquals("true", value(s, "charging"))
-        assertEquals("80 %", LoomoStatus.battery(80, null).message)
-        assertEquals("unknown", value(LoomoStatus.battery(80, null), "charging"))
+        assertEquals("80 %", LoomoStatus.battery(80).message)
     }
 
     @Test
     fun noOrInvalidBatteryReadingIsStale() {
-        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(null, null).level)
-        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(-1, false).level)
-        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(101, false).level)
+        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(null).level)
+        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(-1).level)
+        assertEquals(LoomoStatus.STALE, LoomoStatus.battery(101).level)
     }
 
     @Test

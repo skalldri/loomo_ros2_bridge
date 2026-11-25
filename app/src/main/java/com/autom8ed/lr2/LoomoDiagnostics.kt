@@ -18,15 +18,16 @@ import org.ros2.rcljava.publisher.Publisher
  *  - [TOPIC_DIAGNOSTICS] (diagnostic_msgs/DiagnosticArray), the standard topic, with four
  *    statuses built by [LoomoStatus]: the base's battery, the head's battery, the base's state
  *    and the app's own health.
- *  - [TOPIC_BATTERY] (sensor_msgs/BatteryState): the charge, and whether it is charging. The SDK
- *    gives nothing else (no voltage, current or temperature), so those fields are NaN.
+ *  - [TOPIC_BATTERY] (sensor_msgs/BatteryState): the charge. The SDK gives nothing else (no
+ *    voltage, current, temperature or charging state), so those fields are NaN or unknown.
  *  - [TOPIC_HEAD_BATTERY] (sensor_msgs/BatteryState): the head's own Li-ion cell, from Android
  *    (percentage, voltage, temperature, status, health).
  *
  * Sources:
  *  - the charge: Base.getRobotPower(), in percent, read only while Base is bound;
- *  - charging: Sensor.CHARGE_STATUS. If the query fails once it is not tried again until the
- *    app restarts, so a Loomo that does not implement it is not asked every second;
+ *  - nothing for charging. Sensor.CHARGE_STATUS returned an empty list on our Loomo both on
+ *    battery and on the charger, and Segway's BATTERY_CHANGED broadcast carries only the charge
+ *    (2026-11-24);
  *  - the base's state: the RobotState broadcasts of Segway's locomotion service
  *    (RobotEventStateManager). The service answers a QUERY_STATE broadcast, which is sent on
  *    every tick, so the state stays fresh even if the service only broadcasts changes.
@@ -58,7 +59,6 @@ class LoomoDiagnostics(
 
     @Volatile private var mRunning = false
     private var mThread: Thread? = null
-    private var mChargeStatusWorks = true
     private var mFailures = 0L
 
     fun start() {
@@ -114,11 +114,10 @@ class LoomoDiagnostics(
     private fun tick() {
         queryBaseState()
         val percent = readPercent()
-        val charging = readCharging()
         val head = readHeadBattery()
         val nowNs = System.nanoTime()
         val statuses = listOf(
-            LoomoStatus.battery(percent, charging),
+            LoomoStatus.battery(percent),
             LoomoStatus.headBattery(head),
             LoomoStatus.baseState(mBaseState, nowNs - mBaseStateAtNs),
             LoomoStatus.app(
@@ -134,7 +133,7 @@ class LoomoDiagnostics(
             ),
         )
         publishDiagnostics(statuses)
-        publishBattery(percent, charging)
+        publishBattery(percent)
         publishHeadBattery(head)
     }
 
@@ -189,18 +188,6 @@ class LoomoDiagnostics(
         }
     }
 
-    private fun readCharging(): Boolean? {
-        if (!mChargeStatusWorks || !mSensor.isBind) return null
-        return try {
-            val data = mSensor.querySensorData(CHARGE_QUERY)
-            data[0].intData[0] == 1
-        } catch (t: Throwable) {
-            mChargeStatusWorks = false
-            Log.w(TAG, "Sensor.CHARGE_STATUS failed; not asking again until the app restarts", t)
-            null
-        }
-    }
-
     /** Asks Segway's locomotion service for its RobotState broadcast. */
     private fun queryBaseState() {
         val intent = Intent(RobotAction.RobotEvent.QUERY_STATE)
@@ -229,7 +216,7 @@ class LoomoDiagnostics(
         mDiagnosticsPublisher.publish(msg)
     }
 
-    private fun publishBattery(percent: Int?, charging: Boolean?) {
+    private fun publishBattery(percent: Int?) {
         val msg = sensor_msgs.msg.BatteryState()
         stamp(msg.header)
         msg.voltage = Float.NaN
@@ -239,11 +226,7 @@ class LoomoDiagnostics(
         msg.capacity = Float.NaN
         msg.designCapacity = Float.NaN
         msg.percentage = if (percent != null && percent in 0..100) percent / 100f else Float.NaN
-        msg.powerSupplyStatus = when (charging) {
-            true -> sensor_msgs.msg.BatteryState.POWER_SUPPLY_STATUS_CHARGING
-            false -> sensor_msgs.msg.BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
-            null -> sensor_msgs.msg.BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
-        }
+        msg.powerSupplyStatus = sensor_msgs.msg.BatteryState.POWER_SUPPLY_STATUS_UNKNOWN
         msg.powerSupplyHealth = sensor_msgs.msg.BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
         msg.powerSupplyTechnology = sensor_msgs.msg.BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN
         msg.present = percent != null
@@ -259,7 +242,6 @@ class LoomoDiagnostics(
         const val TOPIC_HEAD_BATTERY = "/loomo/head_battery"
         private const val PERIOD_NS = 1_000_000_000L
         private const val LOCOMOTION_SERVICE_PACKAGE = "com.segway.robot.host.coreservice.locomotionservice"
-        private val CHARGE_QUERY = listOf(Sensor.CHARGE_STATUS)
 
         fun baseStateOf(s: RobotState) = LoomoStatus.BaseState(
             fallen = s.isFallDown,

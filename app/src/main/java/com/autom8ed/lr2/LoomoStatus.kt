@@ -38,44 +38,25 @@ object LoomoStatus {
         val values: List<Pair<String, String>> = emptyList(),
     )
 
-    /**
-     * The battery, from Base.getRobotPower() ([percent], null if Base is unbound or the read
-     * failed) and Sensor.CHARGE_STATUS ([charging], null when unknown).
-     */
-    fun battery(percent: Int?, charging: Boolean?): Status {
-        val chargingText = when (charging) {
-            true -> "true"
-            false -> "false"
-            null -> "unknown"
-        }
+    /** The base's battery, from Base.getRobotPower() ([percent], null if Base is unbound or the read failed). */
+    fun battery(percent: Int?): Status {
         if (percent == null) {
-            return Status(BATTERY, STALE, "no reading from the base", listOf("charging" to chargingText))
+            return Status(BATTERY, STALE, "no reading from the base")
         }
         if (percent !in 0..100) {
-            return Status(
-                BATTERY, STALE, "invalid reading: $percent %",
-                listOf("percent" to percent.toString(), "charging" to chargingText),
-            )
+            return Status(BATTERY, STALE, "invalid reading: $percent %", listOf("percent" to percent.toString()))
         }
         val level = when {
             percent < BATTERY_ERROR_PERCENT -> ERROR
             percent < BATTERY_WARN_PERCENT -> WARN
             else -> OK
         }
-        val state = when (charging) {
-            true -> ", charging"
-            false -> ", discharging"
-            null -> ""
-        }
         val low = when (level) {
             ERROR -> " (critical)"
             WARN -> " (low)"
             else -> ""
         }
-        return Status(
-            BATTERY, level, "$percent %$state$low",
-            listOf("percent" to percent.toString(), "charging" to chargingText),
-        )
+        return Status(BATTERY, level, "$percent %$low", listOf("percent" to percent.toString()))
     }
 
     /** The base's state as Segway's locomotion service reports it (sdkbase RobotState). */
