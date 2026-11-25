@@ -284,6 +284,9 @@ Once a second (`LoomoDiagnostics.kt`), the app publishes:
   fields are NaN or unknown. On 2026-11-24 `Sensor.CHARGE_STATUS` returned an empty list both on
   battery and on the charger, and Segway's `com.segway.robot.action.BATTERY_CHANGED` broadcast
   carried only `CURRENT_POWER`, the same percentage.
+  The reading stops whenever the app is not on screen: Segway's SDK unbinds a background app, so
+  `loomo: Battery` goes STALE, `percentage` is NaN and `present` is false (the battery is still
+  there). `/loomo/head_battery` is not affected.
 - `/loomo/head_battery` (`sensor_msgs/BatteryState`, `location` `head`): the head's cell from
   Android, with `percentage`, `voltage`, `temperature`, `power_supply_status` and
   `power_supply_health`. It is not under `/loomo/head/`, which holds the head's commands.
