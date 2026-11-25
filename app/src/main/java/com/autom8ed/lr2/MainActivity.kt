@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var mAudioInterface: AudioInterface
     private lateinit var mWatchdog: Watchdog
     private lateinit var mStatsReporter: StatsReporter
+    private lateinit var mDiagnostics: LoomoDiagnostics
     private lateinit var mNetworkGate: NetworkGate
 
     // Push to start and the stop path (DriveGate). Created before ROS, so the screen works and the
@@ -275,6 +276,10 @@ class MainActivity : ComponentActivity() {
         mStatsReporter.registerExtra { mJetsonLink.statsLine(System.nanoTime()) }
         mStatsReporter.start()
 
+        // The battery, the base's state and the app's health on /diagnostics, once a second.
+        mDiagnostics = LoomoDiagnostics(this, mNode, mJetsonLink)
+        mDiagnostics.start()
+
         mCameraInterface = CameraInterface(this, mNode, mTfPublisher, mStatsReporter, config)
 
         // A camera failure must not take the app down with it (and the drive gate with it).
@@ -325,6 +330,9 @@ class MainActivity : ComponentActivity() {
         }
         if (this::mStatsReporter.isInitialized) {
             mStatsReporter.stop()
+        }
+        if (this::mDiagnostics.isInitialized) {
+            mDiagnostics.stop()
         }
     }
 
