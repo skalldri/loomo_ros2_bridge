@@ -17,12 +17,16 @@ object LoomoStatus {
     const val BATTERY = PREFIX + "Battery"
     const val BASE_STATE = PREFIX + "Base state"
     const val APP = PREFIX + "App"
+    const val HEAD_BATTERY = PREFIX + "Head battery"
     const val HARDWARE_ID = "loomo"
 
     /** Below this charge (percent) the battery status is WARN. */
     const val BATTERY_WARN_PERCENT = 20
     /** Below this charge (percent) the battery status is ERROR. */
     const val BATTERY_ERROR_PERCENT = 10
+
+    /** At or above this temperature (degrees C) the head battery is WARN. */
+    const val HEAD_BATTERY_WARN_C = 45.0
 
     /** A base state older than this (ns) is STALE: Segway's service stopped answering. */
     const val BASE_STATE_STALE_NS = 5_000_000_000L
@@ -178,5 +182,84 @@ object LoomoStatus {
         }
         val message = if (level == OK) "running" else (errors + warnings).joinToString(", ")
         return Status(APP, level, message, values)
+    }
+
+    /**
+     * The head's own battery, as Android reports it (ACTION_BATTERY_CHANGED): one Li-ion cell
+     * (max170xx fuel gauge, bq24192 charger) that the base keeps charged. Not the base's battery,
+     * which only Base.getRobotPower() reports.
+     */
+    data class HeadBattery(
+        val percent: Int,
+        val voltageMv: Int,
+        val temperatureDeciC: Int,
+        /** android.os.BatteryManager.BATTERY_HEALTH_* */
+        val health: Int,
+        /** android.os.BatteryManager.BATTERY_STATUS_* */
+        val status: Int,
+        /** android.os.BatteryManager.BATTERY_PLUGGED_*, 0 on battery */
+        val plugged: Int,
+    )
+
+    // android.os.BatteryManager's values, so this stays testable on the JVM.
+    const val ANDROID_HEALTH_GOOD = 2
+    const val ANDROID_HEALTH_OVERHEAT = 3
+    const val ANDROID_HEALTH_DEAD = 4
+    const val ANDROID_HEALTH_OVER_VOLTAGE = 5
+    const val ANDROID_HEALTH_UNSPECIFIED_FAILURE = 6
+    const val ANDROID_HEALTH_COLD = 7
+
+    fun androidHealthName(health: Int): String = when (health) {
+        ANDROID_HEALTH_GOOD -> "good"
+        ANDROID_HEALTH_OVERHEAT -> "overheat"
+        ANDROID_HEALTH_DEAD -> "dead"
+        ANDROID_HEALTH_OVER_VOLTAGE -> "over voltage"
+        ANDROID_HEALTH_UNSPECIFIED_FAILURE -> "failure"
+        ANDROID_HEALTH_COLD -> "cold"
+        else -> "unknown"
+    }
+
+    fun androidStatusName(status: Int): String = when (status) {
+        2 -> "charging"
+        3 -> "discharging"
+        4 -> "not charging"
+        5 -> "full"
+        else -> "unknown"
+    }
+
+    fun headBattery(b: HeadBattery?): Status {
+        if (b == null) return Status(HEAD_BATTERY, STALE, "no reading from Android")
+        val tempC = b.temperatureDeciC / 10.0
+        val values = listOf(
+            "percent" to b.percent.toString(),
+            "voltage_v" to String.format(java.util.Locale.ROOT, "%.3f", b.voltageMv / 1000.0),
+            "temperature_c" to String.format(java.util.Locale.ROOT, "%.1f", tempC),
+            "health" to androidHealthName(b.health),
+            "status" to androidStatusName(b.status),
+            "external_power" to (b.plugged != 0).toString(),
+        )
+        val errors = listOfNotNull(
+            "health ${androidHealthName(b.health)}".takeIf {
+                b.health in listOf(
+                    ANDROID_HEALTH_OVERHEAT, ANDROID_HEALTH_DEAD,
+                    ANDROID_HEALTH_OVER_VOLTAGE, ANDROID_HEALTH_UNSPECIFIED_FAILURE,
+                )
+            },
+            "${b.percent} % (critical)".takeIf { b.percent < BATTERY_ERROR_PERCENT },
+        )
+        val warnings = listOfNotNull(
+            "health cold".takeIf { b.health == ANDROID_HEALTH_COLD },
+            "${b.percent} % (low)".takeIf { b.percent in BATTERY_ERROR_PERCENT until BATTERY_WARN_PERCENT },
+            String.format(java.util.Locale.ROOT, "%.1f °C", tempC).takeIf { tempC >= HEAD_BATTERY_WARN_C },
+            "no external power".takeIf { b.plugged == 0 },
+        )
+        val level = when {
+            errors.isNotEmpty() -> ERROR
+            warnings.isNotEmpty() -> WARN
+            else -> OK
+        }
+        val message = if (level == OK) "${b.percent} %, ${androidStatusName(b.status)}"
+        else (errors + warnings).joinToString(", ")
+        return Status(HEAD_BATTERY, level, message, values)
     }
 }

@@ -2,6 +2,8 @@ package com.autom8ed.lr2
 
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.util.Log
 import com.segway.robot.sdk.base.action.RobotAction
 import com.segway.robot.sdk.base.state.RobotEventState
@@ -13,10 +15,13 @@ import org.ros2.rcljava.publisher.Publisher
 
 /**
  * Publishes the Loomo's health once a second. It only reads: nothing here commands the robot.
- *  - [TOPIC_DIAGNOSTICS] (diagnostic_msgs/DiagnosticArray), the standard topic, with three
- *    statuses built by [LoomoStatus]: the battery, the base's state and the app's own health.
+ *  - [TOPIC_DIAGNOSTICS] (diagnostic_msgs/DiagnosticArray), the standard topic, with four
+ *    statuses built by [LoomoStatus]: the base's battery, the head's battery, the base's state
+ *    and the app's own health.
  *  - [TOPIC_BATTERY] (sensor_msgs/BatteryState): the charge, and whether it is charging. The SDK
  *    gives nothing else (no voltage, current or temperature), so those fields are NaN.
+ *  - [TOPIC_HEAD_BATTERY] (sensor_msgs/BatteryState): the head's own Li-ion cell, from Android
+ *    (percentage, voltage, temperature, status, health).
  *
  * Sources:
  *  - the charge: Base.getRobotPower(), in percent, read only while Base is bound;
@@ -39,6 +44,8 @@ class LoomoDiagnostics(
         node.node.createPublisher(diagnostic_msgs.msg.DiagnosticArray::class.java, TOPIC_DIAGNOSTICS)
     private val mBatteryPublisher: Publisher<sensor_msgs.msg.BatteryState> =
         node.node.createPublisher(sensor_msgs.msg.BatteryState::class.java, TOPIC_BATTERY)
+    private val mHeadBatteryPublisher: Publisher<sensor_msgs.msg.BatteryState> =
+        node.node.createPublisher(sensor_msgs.msg.BatteryState::class.java, TOPIC_HEAD_BATTERY)
 
     private val mBase = Base.getInstance()
     private val mSensor = Sensor.getInstance()
@@ -108,9 +115,11 @@ class LoomoDiagnostics(
         queryBaseState()
         val percent = readPercent()
         val charging = readCharging()
+        val head = readHeadBattery()
         val nowNs = System.nanoTime()
         val statuses = listOf(
             LoomoStatus.battery(percent, charging),
+            LoomoStatus.headBattery(head),
             LoomoStatus.baseState(mBaseState, nowNs - mBaseStateAtNs),
             LoomoStatus.app(
                 LoomoStatus.AppHealth(
@@ -126,6 +135,48 @@ class LoomoDiagnostics(
         )
         publishDiagnostics(statuses)
         publishBattery(percent, charging)
+        publishHeadBattery(head)
+    }
+
+    /** The head's own battery: Android's sticky ACTION_BATTERY_CHANGED (no receiver is kept). */
+    private fun readHeadBattery(): LoomoStatus.HeadBattery? {
+        val i = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return null
+        val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return null
+        return LoomoStatus.HeadBattery(
+            percent = level * 100 / scale,
+            voltageMv = i.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0),
+            temperatureDeciC = i.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0),
+            health = i.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN),
+            status = i.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN),
+            plugged = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0),
+        )
+    }
+
+    private fun publishHeadBattery(b: LoomoStatus.HeadBattery?) {
+        val msg = sensor_msgs.msg.BatteryState()
+        stamp(msg.header)
+        msg.current = Float.NaN
+        msg.charge = Float.NaN
+        msg.capacity = Float.NaN
+        msg.designCapacity = Float.NaN
+        msg.present = b != null
+        msg.location = "head"
+        msg.powerSupplyTechnology = sensor_msgs.msg.BatteryState.POWER_SUPPLY_TECHNOLOGY_LION
+        if (b == null) {
+            msg.voltage = Float.NaN
+            msg.temperature = Float.NaN
+            msg.percentage = Float.NaN
+        } else {
+            msg.voltage = b.voltageMv / 1000f
+            msg.temperature = b.temperatureDeciC / 10f
+            msg.percentage = b.percent / 100f
+            // BatteryState's codes are Android's minus one (both follow Linux's power_supply).
+            msg.powerSupplyStatus = (b.status - 1).coerceIn(0, 4).toByte()
+            msg.powerSupplyHealth = (b.health - 1).coerceIn(0, 6).toByte()
+        }
+        mHeadBatteryPublisher.publish(msg)
     }
 
     private fun readPercent(): Int? {
@@ -204,6 +255,8 @@ class LoomoDiagnostics(
         private const val TAG = "LoomoDiagnostics"
         const val TOPIC_DIAGNOSTICS = "/diagnostics"
         const val TOPIC_BATTERY = "/loomo/battery"
+        /** Not under /loomo/head/: that is the head's command namespace. */
+        const val TOPIC_HEAD_BATTERY = "/loomo/head_battery"
         private const val PERIOD_NS = 1_000_000_000L
         private const val LOCOMOTION_SERVICE_PACKAGE = "com.segway.robot.host.coreservice.locomotionservice"
         private val CHARGE_QUERY = listOf(Sensor.CHARGE_STATUS)

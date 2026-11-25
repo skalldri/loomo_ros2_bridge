@@ -104,8 +104,37 @@ class LoomoStatusTest {
 
     @Test
     fun everyNameHasThePrefix() {
-        for (n in listOf(LoomoStatus.BATTERY, LoomoStatus.BASE_STATE, LoomoStatus.APP)) {
+        for (n in listOf(LoomoStatus.BATTERY, LoomoStatus.HEAD_BATTERY, LoomoStatus.BASE_STATE, LoomoStatus.APP)) {
             assertTrue(n, n.startsWith("loomo: "))
         }
+    }
+
+    // As read on the Loomo on 2026-11-24 (dumpsys battery): 95 %, 4.180 V, 20.0 C, good, full, AC.
+    private fun head(
+        percent: Int = 95, tempDeciC: Int = 200, health: Int = LoomoStatus.ANDROID_HEALTH_GOOD,
+        status: Int = 5, plugged: Int = 1,
+    ) = LoomoStatus.HeadBattery(percent, 4180, tempDeciC, health, status, plugged)
+
+    @Test
+    fun headBattery() {
+        val ok = LoomoStatus.headBattery(head())
+        assertEquals(LoomoStatus.HEAD_BATTERY, ok.name)
+        assertEquals(LoomoStatus.OK, ok.level)
+        assertEquals("95 %, full", ok.message)
+        assertEquals("4.180", value(ok, "voltage_v"))
+        assertEquals("20.0", value(ok, "temperature_c"))
+        assertEquals("good", value(ok, "health"))
+        assertEquals("true", value(ok, "external_power"))
+
+        assertEquals(LoomoStatus.STALE, LoomoStatus.headBattery(null).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.headBattery(head(plugged = 0)).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.headBattery(head(percent = 15)).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.headBattery(head(tempDeciC = 450)).level)
+        assertEquals(LoomoStatus.OK, LoomoStatus.headBattery(head(tempDeciC = 449)).level)
+        assertEquals(LoomoStatus.WARN, LoomoStatus.headBattery(head(health = LoomoStatus.ANDROID_HEALTH_COLD)).level)
+        assertEquals(LoomoStatus.ERROR, LoomoStatus.headBattery(head(percent = 5)).level)
+        val hot = LoomoStatus.headBattery(head(health = LoomoStatus.ANDROID_HEALTH_OVERHEAT, tempDeciC = 600))
+        assertEquals(LoomoStatus.ERROR, hot.level)
+        assertEquals("health overheat, 60.0 °C", hot.message)
     }
 }

@@ -268,19 +268,23 @@ order. Near level it barely matters (0.08 degree of tilt at 10 degrees of pitch 
 
 Once a second (`LoomoDiagnostics.kt`), the app publishes:
 
-- `/diagnostics` (`diagnostic_msgs/DiagnosticArray`), the standard topic. It carries three statuses,
+- `/diagnostics` (`diagnostic_msgs/DiagnosticArray`), the standard topic. It carries four statuses,
   all with `hardware_id` `loomo` and a name starting with `loomo: `, so an aggregator can group
   them. The levels are in `LoomoStatus.kt`.
 
   | Status | Source | Levels |
   |---|---|---|
   | `loomo: Battery` | `Base.getRobotPower()` (percent); `Sensor.CHARGE_STATUS` (charging) | OK at 20 % or more, WARN below 20 %, ERROR below 10 %, STALE without a reading (Base unbound) |
+  | `loomo: Head battery` | Android's `ACTION_BATTERY_CHANGED`: the head's own Li-ion cell (one 4.2 V cell, max170xx fuel gauge, bq24192 charger), which the base keeps charged. It is not the base's battery | ERROR on a bad health (overheat, dead, over voltage, failure) or below 10 %; WARN when cold, below 20 %, at 45 °C or more, or without external power. Values: voltage, temperature, health, status |
   | `loomo: Base state` | The `RobotState` broadcast of Segway's locomotion service, asked for each second with `QUERY_STATE` | ERROR when fallen or stuck; WARN when lifted, pushed or locked; STALE after 5 s without an answer. The other flags (spinning, stepped on, rider, the head locks) and the mode (robot or self-balancing vehicle) are values only |
   | `loomo: App` | The app itself | ERROR when Base is unbound (Segway's SDK unbinds a background app); WARN when Sensor or Head is unbound, the clock is not synced, or the Jetson's link report is missing or below 1000 Mb/s. Values: the clock offset, the link speed, and the APK's install time (`versionName` is always 1.0) |
 
 - `/loomo/battery` (`sensor_msgs/BatteryState`): `percentage` (0-1), `power_supply_status`
   (charging, discharging, or unknown), `present`. The SDK gives no voltage, current, temperature or
   capacity, so those fields are NaN.
+- `/loomo/head_battery` (`sensor_msgs/BatteryState`, `location` `head`): the head's cell from
+  Android, with `percentage`, `voltage`, `temperature`, `power_supply_status` and
+  `power_supply_health`. It is not under `/loomo/head/`, which holds the head's commands.
 
 Messages are stamped on the Jetson's clock once the clock sync is ready, and with zero before. Unlike
 the sensor topics, they are published even when the sync is down. If the `CHARGE_STATUS` query fails
