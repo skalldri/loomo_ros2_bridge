@@ -29,8 +29,11 @@ import org.ros2.rcljava.publisher.Publisher
  *    battery and on the charger, and Segway's BATTERY_CHANGED broadcast carries only the charge
  *    (2026-11-24);
  *  - the base's state: the RobotState broadcasts of Segway's locomotion service
- *    (RobotEventStateManager). The service answers a QUERY_STATE broadcast, which is sent on
- *    every tick, so the state stays fresh even if the service only broadcasts changes.
+ *    (RobotEventStateManager). The service broadcasts events (PUSHING, LIFT_UP, ...) when they
+ *    happen, and a RobotState in answer to QUERY_STATE. Each event triggers a query, so a change
+ *    shows within about a second (a push on 2026-11-24 did). Without events, a query goes out
+ *    when the state is older than [QUERY_AFTER_NS], at most every [QUERY_PERIOD_NS]: the service
+ *    logs a warning line for each one, and logcat wraps within minutes.
  *
  * Messages are stamped on the Jetson's clock once [TimeSync] is ready, and with zero before
  * that: diagnostics are published even when the clock sync is down, since that is when they
@@ -56,6 +59,8 @@ class LoomoDiagnostics(
     private val mStateManager = RobotEventStateManager()
     @Volatile private var mBaseState: LoomoStatus.BaseState? = null
     @Volatile private var mBaseStateAtNs = 0L
+    @Volatile private var mEventPending = false
+    private var mLastQueryNs = 0L
 
     @Volatile private var mRunning = false
     private var mThread: Thread? = null
@@ -66,7 +71,9 @@ class LoomoDiagnostics(
         mRunning = true
         try {
             mStateManager.initialize(ctx, object : RobotEventStateManager.EventStateChangedListener {
-                override fun onStateChanged(robotEventState: RobotEventState) {}
+                override fun onStateChanged(robotEventState: RobotEventState) {
+                    mEventPending = true
+                }
 
                 override fun onRobotStateUpdated(robotState: RobotState) {
                     mBaseState = baseStateOf(robotState)
@@ -112,7 +119,14 @@ class LoomoDiagnostics(
     }
 
     private fun tick() {
-        queryBaseState()
+        val queryNs = System.nanoTime()
+        if (mEventPending || mLastQueryNs == 0L ||
+            (queryNs - mBaseStateAtNs > QUERY_AFTER_NS && queryNs - mLastQueryNs >= QUERY_PERIOD_NS)
+        ) {
+            mEventPending = false
+            mLastQueryNs = queryNs
+            queryBaseState()
+        }
         val percent = readPercent()
         val head = readHeadBattery()
         val nowNs = System.nanoTime()
@@ -241,6 +255,10 @@ class LoomoDiagnostics(
         /** Not under /loomo/head/: that is the head's command namespace. */
         const val TOPIC_HEAD_BATTERY = "/loomo/head_battery"
         private const val PERIOD_NS = 1_000_000_000L
+        /** Ask for the base's state when the last one is older than this... */
+        private const val QUERY_AFTER_NS = 4_000_000_000L
+        /** ...but at most this often, unless an event arrived. */
+        private const val QUERY_PERIOD_NS = 5_000_000_000L
         private const val LOCOMOTION_SERVICE_PACKAGE = "com.segway.robot.host.coreservice.locomotionservice"
 
         fun baseStateOf(s: RobotState) = LoomoStatus.BaseState(

@@ -28,8 +28,12 @@ object LoomoStatus {
     /** At or above this temperature (degrees C) the head battery is WARN. */
     const val HEAD_BATTERY_WARN_C = 45.0
 
-    /** A base state older than this (ns) is STALE: Segway's service stopped answering. */
-    const val BASE_STATE_STALE_NS = 5_000_000_000L
+    /**
+     * A base state older than this (ns) is STALE: Segway's service stopped answering. Not less:
+     * on 2026-11-24 its answers to QUERY_STATE stopped for 20 s with nobody touching the robot,
+     * then all arrived at once (Android delivers them through a shared, serial queue).
+     */
+    const val BASE_STATE_STALE_NS = 30_000_000_000L
 
     data class Status(
         val name: String,
